@@ -13,15 +13,16 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import get_linear_fn, get_parameters_by_name, polyak_update
 from stable_baselines3.dqn.policies import CnnPolicy, DQNPolicy, MlpPolicy, MultiInputPolicy, QNetwork
 
-SelfDQN = TypeVar("SelfDQN", bound="DQN")
+SelfDDQN = TypeVar("SelfDDQN", bound="DDQN")
 
 
-class DQN(OffPolicyAlgorithm):
+class DDQN(OffPolicyAlgorithm):
     """
-    Deep Q-Network (DQN)
+    Double Deep Q-Network (DDQN)
 
-    Paper: https://arxiv.org/abs/1312.5602, https://www.nature.com/articles/nature14236
-    Default hyperparameters are taken from the Nature paper,
+    Paper: https://arxiv.org/abs/1509.06461 based on DQN
+    https://arxiv.org/abs/1312.5602, https://www.nature.com/articles/nature14236
+    Default hyperparameters are taken from the DQN Nature paper,
     except for the optimizer and learning rate that were taken from Stable Baselines defaults.
 
     :param policy: The policy model to use (MlpPolicy, CnnPolicy, ...)
@@ -195,10 +196,19 @@ class DQN(OffPolicyAlgorithm):
             with th.no_grad():
                 # Compute the next Q-values using the target network
                 next_q_values = self.q_net_target(replay_data.next_observations)
-                # Follow greedy policy: use the one with the highest value
+                # Decouple action selection from value estimation
+                next_q_values_online = self.q_net(replay_data.next_observations)
+                # Select action with online network
+                next_actions_online = next_q_values_online.argmax(dim=1).reshape(-1, 1)
+                # Estimate using target q network
+                next_q_values = th.gather(next_q_values, dim=1, index=next_actions_online)
+                """
+                DQN style :
+                 # Follow greedy policy: use the one with the highest value
                 next_q_values, _ = next_q_values.max(dim=1)
                 # Avoid potential broadcast issue
                 next_q_values = next_q_values.reshape(-1, 1)
+                """
                 # 1-step TD target
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
 
@@ -256,14 +266,14 @@ class DQN(OffPolicyAlgorithm):
         return action, state
 
     def learn(
-        self: SelfDQN,
+        self: SelfDDQN,
         total_timesteps: int,
         callback: MaybeCallback = None,
         log_interval: int = 4,
         tb_log_name: str = "DQN",
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
-    ) -> SelfDQN:
+    ) -> SelfDDQN:
         return super().learn(
             total_timesteps=total_timesteps,
             callback=callback,
