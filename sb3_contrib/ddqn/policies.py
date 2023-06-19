@@ -2,8 +2,6 @@ from typing import Any, Dict, List, Optional, Type
 
 import torch as th
 from gymnasium import spaces
-from torch import nn
-
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
@@ -13,6 +11,7 @@ from stable_baselines3.common.torch_layers import (
     create_mlp,
 )
 from stable_baselines3.common.type_aliases import Schedule
+from torch import nn
 
 
 class QNetwork(BasePolicy):
@@ -164,7 +163,6 @@ class DQNPolicy(BasePolicy):
         self.q_net_target = self.make_q_net()
         self.q_net_target.load_state_dict(self.q_net.state_dict())
         self.q_net_target.set_training_mode(False)
-
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(  # type: ignore[call-arg]
             self.parameters(),

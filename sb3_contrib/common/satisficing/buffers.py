@@ -1,18 +1,17 @@
 import warnings
-from typing import Any, Dict, List, Optional, Union, Callable
-
-import psutil
-from stable_baselines3.common.buffers import BaseBuffer
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
+import psutil
 import torch as th
 from gymnasium import spaces
+from stable_baselines3.common.buffers import BaseBuffer
 from stable_baselines3.common.vec_env import VecNormalize
 
 
-class ReplayBuffer(BaseBuffer):
+class SatisficingReplayBuffer(BaseBuffer):
     """
-    Replay buffer used in off-policy algorithms like SAC/TD3.
+    Same as ReplayBuffer but also stores lambda in the transitions
 
     :param buffer_size: Max number of element in the buffer
     :param observation_space: Observation space
@@ -70,13 +69,16 @@ class ReplayBuffer(BaseBuffer):
 
         self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         self.dones = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.lambdas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         # Handle timeouts termination properly if needed
         # see https://github.com/DLR-RM/stable-baselines3/issues/284
         self.handle_timeout_termination = handle_timeout_termination
         self.timeouts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
 
         if psutil is not None:
-            total_memory_usage = self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes
+            total_memory_usage = (
+                self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes + self.lambdas.nbytes
+            )
 
             if self.next_observations is not None:
                 total_memory_usage += self.next_observations.nbytes
@@ -97,6 +99,8 @@ class ReplayBuffer(BaseBuffer):
         action: np.ndarray,
         reward: np.ndarray,
         done: np.ndarray,
+        lmbda: np.ndarray,
+        next_lambda: np.ndarray,
         infos: List[Dict[str, Any]],
     ) -> None:
         # Reshape needed when using multiple envs with discrete observations

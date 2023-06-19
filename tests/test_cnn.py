@@ -9,11 +9,12 @@ from stable_baselines3.common.envs import FakeImageEnv
 from stable_baselines3.common.utils import zip_strict
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecTransposeImage, is_vecenv_wrapped
 
-from sb3_contrib import QRDQN, TQC, TRPO, MaskablePPO, RecurrentPPO, DDQN
+from sb3_contrib import DDQN, QRDQN, TQC, TRPO, ArDDQN, MaskablePPO, RecurrentPPO
 from sb3_contrib.common.wrappers import ActionMasker
 
 
-@pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO, DDQN])
+# @pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO, DDQN])
+@pytest.mark.parametrize("model_class", [ArDDQN, DDQN, QRDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
 def test_cnn(tmp_path, model_class, share_features_extractor):
     SAVE_NAME = "cnn_model.zip"
@@ -40,7 +41,7 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
                 features_extractor_kwargs=dict(features_dim=32),
             ),
         )
-    if model_class == DDQN:
+    if model_class in {DDQN, ArDDQN}:
         kwargs = dict(
             buffer_size=250,
             policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32)),

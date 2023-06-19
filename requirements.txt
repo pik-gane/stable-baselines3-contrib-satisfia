@@ -1,0 +1,7 @@
+gymnasium
+numpy
+torch
+setuptools
+pytest
+pygame
+psutil
