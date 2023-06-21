@@ -1,15 +1,17 @@
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import psutil
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.buffers import BaseBuffer
+from stable_baselines3.common.buffers import ReplayBuffer
 from stable_baselines3.common.vec_env import VecNormalize
 
+from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
 
-class SatisficingReplayBuffer(BaseBuffer):
+
+class SatisficingReplayBuffer(ReplayBuffer):
     """
     Same as ReplayBuffer but also stores lambda in the transitions
 
@@ -39,45 +41,20 @@ class SatisficingReplayBuffer(BaseBuffer):
         optimize_memory_usage: bool = False,
         handle_timeout_termination: bool = True,
     ):
-        super().__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
-
-        # Adjust buffer size
-        self.buffer_size = max(buffer_size // n_envs, 1)
-
-        # Check that the replay buffer can fit into the memory
+        super().__init__(
+            buffer_size, observation_space, action_space, device, n_envs, optimize_memory_usage, handle_timeout_termination
+        )
+        self.lambdas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.next_lambdas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
         if psutil is not None:
             mem_available = psutil.virtual_memory().available
-
-        # there is a bug if both optimize_memory_usage and handle_timeout_termination are true
-        # see https://github.com/DLR-RM/stable-baselines3/issues/934
-        if optimize_memory_usage and handle_timeout_termination:
-            raise ValueError(
-                "ReplayBuffer does not support optimize_memory_usage = True "
-                "and handle_timeout_termination = True simultaneously."
-            )
-        self.optimize_memory_usage = optimize_memory_usage
-
-        self.observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
-
-        if optimize_memory_usage:
-            # `observations` contains also the next observation
-            self.next_observations = None
-        else:
-            self.next_observations = np.zeros((self.buffer_size, self.n_envs, *self.obs_shape), dtype=observation_space.dtype)
-
-        self.actions = np.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=action_space.dtype)
-
-        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        self.lambdas = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-        # Handle timeouts termination properly if needed
-        # see https://github.com/DLR-RM/stable-baselines3/issues/284
-        self.handle_timeout_termination = handle_timeout_termination
-        self.timeouts = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
-
-        if psutil is not None:
             total_memory_usage = (
-                self.observations.nbytes + self.actions.nbytes + self.rewards.nbytes + self.dones.nbytes + self.lambdas.nbytes
+                self.observations.nbytes
+                + self.actions.nbytes
+                + self.rewards.nbytes
+                + self.dones.nbytes
+                + self.lambdas.nbytes
+                + self.next_lambdas.nbytes
             )
 
             if self.next_observations is not None:
@@ -92,69 +69,25 @@ class SatisficingReplayBuffer(BaseBuffer):
                     f"replay buffer {total_memory_usage:.2f}GB > {mem_available:.2f}GB"
                 )
 
-    def add(
+    def add_with_lambda(
         self,
         obs: np.ndarray,
+        lambda_: np.ndarray,
         next_obs: np.ndarray,
+        next_lambda: np.ndarray,
         action: np.ndarray,
         reward: np.ndarray,
         done: np.ndarray,
-        lmbda: np.ndarray,
-        next_lambda: np.ndarray,
         infos: List[Dict[str, Any]],
     ) -> None:
-        # Reshape needed when using multiple envs with discrete observations
-        # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
-        if isinstance(self.observation_space, spaces.Discrete):
-            obs = obs.reshape((self.n_envs, *self.obs_shape))
-            next_obs = next_obs.reshape((self.n_envs, *self.obs_shape))
-
-        # Reshape to handle multi-dim and discrete action spaces, see GH #970 #1392
-        action = action.reshape((self.n_envs, self.action_dim))
-
-        # Copy to avoid modification by reference
-        self.observations[self.pos] = np.array(obs).copy()
-
-        if self.optimize_memory_usage:
-            self.observations[(self.pos + 1) % self.buffer_size] = np.array(next_obs).copy()
-        else:
-            self.next_observations[self.pos] = np.array(next_obs).copy()
-
-        self.actions[self.pos] = np.array(action).copy()
-        self.rewards[self.pos] = np.array(reward).copy()
-        self.dones[self.pos] = np.array(done).copy()
-
-        if self.handle_timeout_termination:
-            self.timeouts[self.pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
-
-        self.pos += 1
-        if self.pos == self.buffer_size:
-            self.full = True
-            self.pos = 0
-
-    def sample(self, batch_size: int, env: Optional[VecNormalize] = None) -> ReplayBufferSamples:
         """
-        Sample elements from the replay buffer.
-        Custom sampling when using memory efficient variant,
-        as we should not sample the element with index `self.pos`
-        See https://github.com/DLR-RM/stable-baselines3/pull/28#issuecomment-637559274
-
-        :param batch_size: Number of element to sample
-        :param env: associated gym VecEnv
-            to normalize the observations/rewards when sampling
-        :return:
+        Same as ReplayBuffer.add, but adapted so that it also stores lambda in the transition
         """
-        if not self.optimize_memory_usage:
-            return super().sample(batch_size=batch_size, env=env)
-        # Do not sample the element with index `self.pos` as the transitions is invalid
-        # (we use only one array to store `obs` and `next_obs`)
-        if self.full:
-            batch_inds = (np.random.randint(1, self.buffer_size, size=batch_size) + self.pos) % self.buffer_size
-        else:
-            batch_inds = np.random.randint(0, self.pos, size=batch_size)
-        return self._get_samples(batch_inds, env=env)
+        super().add(obs, next_obs, action, reward, done, infos)
+        self.lambdas[self.pos] = np.array(lambda_).copy()
+        self.next_lambdas[self.pos] = np.array(next_lambda).copy()
 
-    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> ReplayBufferSamples:
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> SatisficingReplayBufferSamples:
         # Sample randomly the env idx
         env_indices = np.random.randint(0, high=self.n_envs, size=(len(batch_inds),))
 
@@ -165,11 +98,27 @@ class SatisficingReplayBuffer(BaseBuffer):
 
         data = (
             self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
+            self.lambdas[batch_inds, env_indices, :],
             self.actions[batch_inds, env_indices, :],
             next_obs,
+            self.next_lambdas[batch_inds, env_indices, :],
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
             (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1),
             self._normalize_reward(self.rewards[batch_inds, env_indices].reshape(-1, 1), env),
         )
-        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
+        return SatisficingReplayBufferSamples(*tuple(map(self.to_torch, data)))
+
+    def add(
+        self,
+        obs: np.ndarray,
+        next_obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        done: np.ndarray,
+        infos: List[Dict[str, Any]],
+    ):
+        """
+        This should not be used. Use lambda instead
+        """
+        raise NotImplementedError("Please use add_with_lambda instead")

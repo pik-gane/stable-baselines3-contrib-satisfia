@@ -1,14 +1,14 @@
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, SupportsFloat, Tuple, Union
+from typing import Dict, NamedTuple
 
-import gymnasium as gym
-import numpy as np
 import torch as th
 
 
-class ExpendedReplayBufferSamples(NamedTuple):
+class SatisficingReplayBufferSamples(NamedTuple):
     observations: th.Tensor
+    lambda_: th.Tensor
     actions: th.Tensor
     next_observations: th.Tensor
+    next_lambda: th.Tensor
     dones: th.Tensor
     rewards: th.Tensor
     extras: Dict[str, th.Tensor]
