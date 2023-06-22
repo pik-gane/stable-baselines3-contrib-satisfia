@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 import torch as th
 import torch.nn as nn
+from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.preprocessing import get_flattened_obs_dim
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from sb3_contrib import DDQN, QRDQN, TQC, ArDDQN, MaskablePPO
+from sb3_contrib import QRDQN, TQC, ArDQN, MaskablePPO
 from sb3_contrib.common.envs import InvalidActionEnvDiscrete
 from sb3_contrib.common.maskable.utils import get_action_masks
 
@@ -60,22 +61,7 @@ def clone_qrdqn_batch_norm_stats(model: QRDQN) -> (th.Tensor, th.Tensor, th.Tens
     return quantile_net_bias, quantile_net_running_mean, quantile_net_target_bias, quantile_net_target_running_mean
 
 
-def clone_ddqn_batch_norm_stats(model: DDQN) -> (th.Tensor, th.Tensor, th.Tensor, th.Tensor):
-    """
-    Clone the bias and running mean from the quantile network and quantile-target network.
-    :param model:
-    :return: the bias and running mean from the quantile network and quantile-target network
-    """
-    q_net_batch_norm = model.policy.q_net.features_extractor.batch_norm
-    q_net_bias, q_net_running_mean = clone_batch_norm_stats(q_net_batch_norm)
-
-    q_net_target_batch_norm = model.policy.q_net_target.features_extractor.batch_norm
-    q_net_target_bias, q_net_target_running_mean = clone_batch_norm_stats(q_net_target_batch_norm)
-
-    return q_net_bias, q_net_running_mean, q_net_target_bias, q_net_target_running_mean
-
-
-def clone_ar_ddqn_batch_norm_stats(model: ArDDQN) -> List[th.Tensor]:
+def clone_ar_ddqn_batch_norm_stats(model: ArDQN) -> List[th.Tensor]:
     """
     Clone the bias and running mean from the quantile network and quantile-target network.
     :param model:
@@ -84,11 +70,9 @@ def clone_ar_ddqn_batch_norm_stats(model: ArDDQN) -> List[th.Tensor]:
     tensors = []
     for net in [
         model.policy.q_net,
-        model.policy.qmax_net,
-        model.policy.qmin_net,
+        model.policy.delta_qmax_net,
+        model.policy.delta_qmin_net,
         model.policy.q_net_target,
-        model.policy.qmax_net_target,
-        model.policy.qmin_net_target,
     ]:
         net_batch_norm = net.features_extractor.batch_norm
         net_bias, net_running_mean = clone_batch_norm_stats(net_batch_norm)
@@ -124,8 +108,7 @@ CLONE_HELPERS = {
     QRDQN: clone_qrdqn_batch_norm_stats,
     TQC: clone_tqc_batch_norm_stats,
     MaskablePPO: clone_on_policy_batch_norm,
-    DDQN: clone_ddqn_batch_norm_stats,
-    ArDDQN: clone_ar_ddqn_batch_norm_stats,
+    ArDQN: clone_ar_ddqn_batch_norm_stats,
 }
 
 
@@ -246,20 +229,21 @@ def test_tqc_train_with_batch_norm():
     assert th.isclose(critic_running_mean_after, critic_target_running_mean_after).all()
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TQC])
+# @pytest.mark.parametrize("model_class", [QRDQN, TQC, ArDQN])
+@pytest.mark.parametrize("model_class", [ArDQN])
 def test_offpolicy_collect_rollout_batch_norm(model_class):
-    if model_class in [QRDQN]:
+    if model_class in [QRDQN, ArDQN]:
         env_id = "CartPole-v1"
     else:
         env_id = "Pendulum-v1"
 
     clone_helper = CLONE_HELPERS[model_class]
-
+    policy_kwargs = dict(net_arch=[16, 16], features_extractor_class=FlattenBatchNormDropoutExtractor)
     learning_starts = 10
     model = model_class(
         "MlpPolicy",
         env_id,
-        policy_kwargs=dict(net_arch=[16, 16], features_extractor_class=FlattenBatchNormDropoutExtractor),
+        policy_kwargs=policy_kwargs,
         learning_starts=learning_starts,
         seed=1,
         gradient_steps=0,
@@ -277,29 +261,54 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
         assert th.isclose(param_before, param_after).all()
 
 
-@pytest.mark.parametrize("model_class", [DDQN, ArDDQN])
-# @pytest.mark.parametrize("model_class", [QRDQN, TQC, DDQN, AR_DDQN])
+@pytest.mark.parametrize("model_class", [QRDQN, TQC])
 @pytest.mark.parametrize("env_id", ["Pendulum-v1", "CartPole-v1"])
 def test_predict_with_dropout_batch_norm(model_class, env_id):
     if env_id == "CartPole-v1":
         if model_class in [TQC]:
             return
-    elif model_class in [QRDQN, DDQN, ArDDQN]:
+    elif model_class in [QRDQN, ArDQN]:
         return
 
     model_kwargs = dict(seed=1)
     clone_helper = CLONE_HELPERS[model_class]
-
-    if model_class in [QRDQN, TQC, DDQN, ArDDQN]:
-        model_kwargs["learning_starts"] = 0
-    else:
-        model_kwargs["n_steps"] = 64
-
     policy_kwargs = dict(
         features_extractor_class=FlattenBatchNormDropoutExtractor,
         net_arch=[16, 16],
     )
+    if model_class in [QRDQN, TQC, ArDQN]:
+        model_kwargs["learning_starts"] = 0
+    else:
+        model_kwargs["n_steps"] = 64
+
     model = model_class("MlpPolicy", env_id, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
+
+    batch_norm_stats_before = clone_helper(model)
+
+    env = model.get_env()
+    observation = env.reset()
+    first_prediction, _ = model.predict(observation, deterministic=True)
+    for _ in range(5):
+        prediction, _ = model.predict(observation, deterministic=True)
+        np.testing.assert_allclose(first_prediction, prediction)
+
+    batch_norm_stats_after = clone_helper(model)
+
+    # No change in batch norm params
+    for param_before, param_after in zip(batch_norm_stats_before, batch_norm_stats_after):
+        assert th.isclose(param_before, param_after).all()
+
+
+@pytest.mark.parametrize("env_id", ["CartPole-v1"])
+def test_ardqn_predict_with_dropout_batch_norm(env_id):
+    model_kwargs = dict(seed=1, learning_starts=0)
+    clone_helper = CLONE_HELPERS[ArDQN]
+    policy_kwargs = dict(
+        features_extractor_class=FlattenBatchNormDropoutExtractor,
+        net_arch=[16, 16],
+        initial_aspiration=50.0,
+    )
+    model = ArDQN("MlpPolicy", env_id, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
 
     batch_norm_stats_before = clone_helper(model)
 

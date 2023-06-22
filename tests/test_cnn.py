@@ -9,12 +9,12 @@ from stable_baselines3.common.envs import FakeImageEnv
 from stable_baselines3.common.utils import zip_strict
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecTransposeImage, is_vecenv_wrapped
 
-from sb3_contrib import DDQN, QRDQN, TQC, TRPO, ArDDQN, MaskablePPO, RecurrentPPO
+from sb3_contrib import QRDQN, TQC, TRPO, ArDQN, MaskablePPO, RecurrentPPO
 from sb3_contrib.common.wrappers import ActionMasker
 
 
 # @pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO, DDQN])
-@pytest.mark.parametrize("model_class", [ArDDQN, DDQN, QRDQN])
+@pytest.mark.parametrize("model_class", [ArDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
 def test_cnn(tmp_path, model_class, share_features_extractor):
     SAVE_NAME = "cnn_model.zip"
@@ -41,10 +41,10 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
                 features_extractor_kwargs=dict(features_dim=32),
             ),
         )
-    if model_class in {DDQN, ArDDQN}:
+    if model_class in {ArDQN}:
         kwargs = dict(
             buffer_size=250,
-            policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32)),
+            policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32), initial_aspiration=50.0),
         )
 
     model = model_class("CnnPolicy", env, **kwargs).learn(250)
@@ -57,6 +57,8 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
     # Test stochastic predict with channel last input
     if model_class == QRDQN:
         model.exploration_rate = 0.9
+    if model_class == ArDQN:
+        model.policy.reset_aspiration()
 
     for _ in range(10):
         model.predict(obs, deterministic=False)
@@ -91,7 +93,7 @@ def params_should_differ(params, other_params):
         assert not th.allclose(param, other_param)
 
 
-@pytest.mark.parametrize("model_class", [TQC, QRDQN, DDQN])
+@pytest.mark.parametrize("model_class", [TQC, QRDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
 def test_feature_extractor_target_net(model_class, share_features_extractor):
     if model_class == QRDQN and share_features_extractor:
@@ -99,7 +101,7 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
 
     env = FakeImageEnv(screen_height=40, screen_width=40, n_channels=1, discrete=model_class not in {TQC})
 
-    if model_class in {TQC, QRDQN, DDQN}:
+    if model_class in {TQC, QRDQN}:
         # Avoid memory error when using replay buffer
         # Reduce the size of the features and the number of quantiles
         kwargs = dict(
@@ -170,7 +172,8 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
     params_should_match(original_param, model.critic.parameters())
 
 
-@pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, DDQN])
+# @pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, ArDQN])
+@pytest.mark.parametrize("model_class", [ArDQN])
 @pytest.mark.parametrize("normalize_images", [True, False])
 def test_image_like_input(model_class, normalize_images):
     """

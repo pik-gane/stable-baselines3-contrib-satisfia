@@ -9,7 +9,7 @@ from stable_baselines3.common.envs import SimpleMultiObsEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecNormalize
 
-from sb3_contrib import QRDQN, TQC, TRPO
+from sb3_contrib import QRDQN, TQC, TRPO, ArDQN
 
 
 class DummyDictEnv(gym.Env):
@@ -93,13 +93,14 @@ def test_env(use_discrete_actions, channel_last, nested_dict_obs, vec_only):
         check_env(DummyDictEnv(use_discrete_actions, channel_last, nested_dict_obs, vec_only))
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+# todo: make this pass for ArDQN (needs DicReplayBuffer support)
+@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO, ArDQN])
 def test_consistency(model_class):
     """
     Make sure that dict obs with vector only vs using flatten obs is equivalent.
     This ensures notable that the network architectures are the same.
     """
-    use_discrete_actions = model_class == QRDQN
+    use_discrete_actions = model_class in {QRDQN, ArDQN}
     dict_env = DummyDictEnv(use_discrete_actions=use_discrete_actions, vec_only=True)
     dict_env = gym.wrappers.TimeLimit(dict_env, 100)
     env = gym.wrappers.FlattenObservation(dict_env)
@@ -121,7 +122,7 @@ def test_consistency(model_class):
             train_freq=8,
             gradient_steps=1,
         )
-        if model_class == QRDQN:
+        if model_class in {QRDQN, ArDQN}:
             kwargs["learning_starts"] = 0
 
     dict_model = model_class("MultiInputPolicy", dict_env, gamma=0.5, seed=1, **kwargs)
