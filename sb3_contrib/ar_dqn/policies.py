@@ -113,7 +113,7 @@ class ArDQNPolicy(DQNPolicy):
         # todo?: using a for loop is crappy, if it's too slow, we could rewrite this using pytorch
         q_values_batch = self.q_net(obs)
         actions = th.zeros(len(obs), dtype=th.int)
-        aspirations = th.as_tensor(self.aspiration, device=self.device)
+        aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
         for i in range(len(obs)):
             q_values = q_values_batch[i]
             if aspirations.dim() > 0:
@@ -122,8 +122,11 @@ class ArDQNPolicy(DQNPolicy):
                 aspiration = aspirations
             exact = (q_values == aspiration).nonzero()
             if len(exact) > 0:
-                index = np.random.randint(0, len(exact[0]))
-                actions[i] = exact[0][index]
+                if not deterministic:
+                    index = np.random.randint(0, len(exact[0]))
+                    actions[i] = exact[0][index]
+                else:
+                    actions[i] = exact[0].min()
             else:
                 higher = q_values > aspiration
                 lower = q_values <= aspiration
@@ -138,7 +141,7 @@ class ArDQNPolicy(DQNPolicy):
                     a_plus = q_values[higher].argmin()
                     p = ratio(q_values[a_minus], aspiration, q_values[a_plus])
                     # Else, with probability p return a+
-                    if np.random.rand() <= p or (p > 0.5 and deterministic):
+                    if (not deterministic and np.random.rand() <= p) or (p > 0.5 and deterministic):
                         actions[i] = a_plus
                     else:
                         actions[i] = a_minus
@@ -182,6 +185,15 @@ class ArDQNPolicy(DQNPolicy):
         Reset the current aspiration to the initial one
         """
         self.aspiration = self.initial_aspiration
+
+    def _get_constructor_parameters(self) -> Dict[str, Any]:
+        data = super()._get_constructor_parameters()
+        data.update(
+            dict(
+                initial_aspiration=self.initial_aspiration,
+            )
+        )
+        return data
 
 
 MlpPolicy = ArDQNPolicy
