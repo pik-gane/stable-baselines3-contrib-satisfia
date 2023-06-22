@@ -10,6 +10,8 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
 
+# Todo? : add support DictReplayBuffer
+
 
 class SatisficingReplayBuffer(ReplayBuffer):
     """
@@ -98,10 +100,10 @@ class SatisficingReplayBuffer(ReplayBuffer):
 
         data = (
             self._normalize_obs(self.observations[batch_inds, env_indices, :], env),
-            self.lambdas[batch_inds, env_indices, :],
+            self.lambdas[batch_inds, env_indices],
             self.actions[batch_inds, env_indices, :],
             next_obs,
-            self.next_lambdas[batch_inds, env_indices, :],
+            self.next_lambdas[batch_inds, env_indices],
             # Only use dones that are not due to timeouts
             # deactivated by default (timeouts is initialized as an array of False)
             (self.dones[batch_inds, env_indices] * (1 - self.timeouts[batch_inds, env_indices])).reshape(-1, 1),
