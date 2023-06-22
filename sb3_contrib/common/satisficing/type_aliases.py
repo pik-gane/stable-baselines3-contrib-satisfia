@@ -11,4 +11,3 @@ class SatisficingReplayBufferSamples(NamedTuple):
     next_lambda: th.Tensor
     dones: th.Tensor
     rewards: th.Tensor
-    extras: Dict[str, th.Tensor]
