@@ -1,8 +1,7 @@
 import os
 
-from sb3_contrib.ar_ddqn import ArDDQN
+from sb3_contrib.ar_dqn import ArDQN
 from sb3_contrib.ars import ARS
-from sb3_contrib.ddqn import DDQN
 from sb3_contrib.ppo_mask import MaskablePPO
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 from sb3_contrib.qrdqn import QRDQN
@@ -21,6 +20,5 @@ __all__ = [
     "QRDQN",
     "TQC",
     "TRPO",
-    "DDQN",
-    "ArDDQN",
+    "ArDQN",
 ]
