@@ -206,9 +206,12 @@ class ArDQN(DQN):
         self._n_updates += gradient_steps
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record("train/q_loss", np.mean(q_losses), exclude="tensorboard")
-        self.logger.record("train/qmax_loss", np.mean(qmax_losses), exclude="tensorboard")
-        self.logger.record("train/qmin_loss", np.mean(qmin_losses), exclude="tensorboard")
+        self.logger.record_mean("train/mean_q_loss", np.mean(q_losses))
+        self.logger.record_mean("train/mean_qmax_loss", np.mean(qmax_losses))
+        self.logger.record_mean("train/mean_qmin_loss", np.mean(qmin_losses))
+        self.logger.record("train/q_loss", np.mean(q_losses))
+        self.logger.record("train/qmax_loss", np.mean(qmax_losses))
+        self.logger.record("train/qmin_loss", np.mean(qmin_losses))
 
     def learn(
         self: SelfArDQN,
