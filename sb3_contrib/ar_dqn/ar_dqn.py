@@ -84,7 +84,7 @@ class ArDQN(DQN):
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule] = 1e-4,
         buffer_size: int = 1_000_000,  # 1e6
-        learning_starts: int = 50000,
+        learning_starts: int = 1000,
         batch_size: int = 32,
         mu: float = 0.0,
         tau: float = 1.0,
@@ -165,10 +165,9 @@ class ArDQN(DQN):
 
             with th.no_grad():
                 next_q_values = self.q_net_target(replay_data.next_observations)
-                smooth_lambda = interpolate(replay_data.next_lambda, self.mu, replay_data.lambda_)
-                # todo check dim
-                v_min = next_q_values.min(dim=1)
-                v_max = next_q_values.max(dim=1)
+                smooth_lambda = interpolate(replay_data.next_lambda, self.mu, replay_data.lambda_).unsqueeze(1)
+                v_min = next_q_values.min(dim=1).values.unsqueeze(1)
+                v_max = next_q_values.max(dim=1).values.unsqueeze(1)
                 v = interpolate(v_min, smooth_lambda, v_max)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * v
                 target_delta_min = self.gamma * (v - v_min)
@@ -201,7 +200,6 @@ class ArDQN(DQN):
             (q_loss + qmin_loss + qmax_loss).backward()
             # Clip gradient norm
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            # Todo: check if all networks are updated
             self.policy.optimizer.step()
 
         # Increase update counter
