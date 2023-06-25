@@ -1,21 +1,17 @@
-import warnings
-from typing import Any, Dict, Iterator, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
     CombinedExtractor,
     FlattenExtractor,
     NatureCNN,
-    create_mlp,
 )
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from torch import nn
-from torch.nn import Parameter
 
 from sb3_contrib.ar_dqn.utils import interpolate, ratio
 
@@ -61,7 +57,7 @@ class ArDQNPolicy(DQNPolicy):
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.aspiration = initial_aspiration
+        self.aspiration: Union[float, np.ndarray] = initial_aspiration
         self.initial_aspiration = initial_aspiration
         super().__init__(
             observation_space,
@@ -174,17 +170,22 @@ class ArDQNPolicy(DQNPolicy):
             q = th.gather(self.q_net(obs_t), dim=1, index=a_t)
             q_min = q - th.gather(self.delta_qmin_net(obs_t), 1, a_t)
             q_max = q + th.gather(self.delta_qmax_net(obs_t), 1, a_t)
-            # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily chosen
-            #   as in theory it shouldn't matter.
+            # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
+            #   chosen as in theory it shouldn't matter.
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
             q = self.q_net_target(obs_t1)
             self.aspiration = interpolate(q.min(dim=1).values, lambda_t1, q.max(dim=1).values).cpu().numpy()
 
-    def reset_aspiration(self) -> None:
+    def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
         Reset the current aspiration to the initial one
+
+        :param dones: if not None, reset only the aspiration that correspond to the done environments
         """
-        self.aspiration = self.initial_aspiration
+        if dones is None:
+            self.aspiration = self.initial_aspiration
+        else:
+            self.aspiration[dones] = self.initial_aspiration
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         data = super()._get_constructor_parameters()
