@@ -6,13 +6,14 @@ import numpy as np
 
 from stable_baselines3.common import type_aliases
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
+from sb3_contrib.ar_dqn import ArDQN
 
 
 def evaluate_policy(
-    model: "type_aliases.PolicyPredictor",
+    model: ArDQN,
     env: Union[gym.Env, VecEnv],
     n_eval_episodes: int = 10,
-    deterministic: bool = True,
+    deterministic: bool = False,
     render: bool = False,
     callback: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None,
     reward_threshold: Optional[float] = None,
@@ -20,7 +21,7 @@ def evaluate_policy(
     warn: bool = True,
 ) -> Union[Tuple[float, float], Tuple[List[float], List[int]]]:
     """
-    Runs policy for ``n_eval_episodes`` episodes and returns average reward.
+    Runs policy satisficing for ``n_eval_episodes`` episodes and returns average reward.
     If a vector env is passed in, this divides the episodes to evaluate onto the
     different elements of the vector env. This static division of work is done to
     remove bias. See https://github.com/DLR-RM/stable-baselines3/issues/402 for more
@@ -34,12 +35,10 @@ def evaluate_policy(
         results as well. You can avoid this by wrapping environment with ``Monitor``
         wrapper before anything else.
 
-    :param model: The RL agent you want to evaluate. This can be any object
-        that implements a `predict` method, such as an RL algorithm (``BaseAlgorithm``)
-        or policy (``BasePolicy``).
+    :param model: The satisficing RL agent you want to evaluate.
     :param env: The gym environment or ``VecEnv`` environment.
     :param n_eval_episodes: Number of episode to evaluate the agent
-    :param deterministic: Whether to use deterministic or stochastic actions
+    :param deterministic: Whether to use deterministic or stochastic actions. Default to ``False``.
     :param render: Whether to render the environment or not
     :param callback: callback function to do additional checks,
         called after each step. Gets locals() and globals() passed as parameters.
@@ -84,6 +83,7 @@ def evaluate_policy(
     observations = env.reset()
     states = None
     episode_starts = np.ones((env.num_envs,), dtype=bool)
+    model.switch_to_eval()
     while (episode_counts < episode_count_targets).any():
         actions, states = model.predict(
             observations,  # type: ignore[arg-type]
@@ -92,6 +92,8 @@ def evaluate_policy(
             deterministic=deterministic,
         )
         new_observations, rewards, dones, infos = env.step(actions)
+        model.rescale_aspiration(observations, actions, new_observations)
+        model.reset_aspiration(dones)
         current_rewards += rewards
         current_lengths += 1
         for i in range(n_envs):
