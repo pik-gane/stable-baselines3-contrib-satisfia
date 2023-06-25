@@ -108,7 +108,8 @@ class ArDQN(DQN):
     ) -> None:
         if not ((type(policy) != str) or (policy_kwargs is not None and "initial_aspiration" in policy_kwargs.keys())):
             warnings.warn(
-                "ArDQN requires a value for initial_aspiration in policy_kwargs\nIf this is not a test, consider setting this parameter"
+                "ArDQN requires a value for initial_aspiration in policy_kwargs\nIf this is not a test, consider setting this parameter",
+                UserWarning,
             )
             if policy_kwargs is None:
                 policy_kwargs = {}
@@ -242,12 +243,20 @@ class ArDQN(DQN):
         """
         self.policy.rescale_aspiration(self.policy.obs_to_tensor(obs_t)[0], a_t, self.policy.obs_to_tensor(obs_t1)[0])
 
+    def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
+        """
+        Reset the current aspiration to the initial one
+
+        :param dones: if not None, reset only the aspiration that correspond to the done environments
+        """
+        self.policy.reset_aspiration(dones)
+
     def switch_to_eval(self) -> None:
         """
         Prepare the model to be evaluated
         """
         self.exploration_rate = 0.0
-        self.policy.reset_aspiration()
+        self.reset_aspiration()
 
     def collect_rollouts(
         self,
@@ -297,6 +306,7 @@ class ArDQN(DQN):
                 # will update self.policy.aspiration
                 self.policy.rescale_aspiration(self.policy.obs_to_tensor(self._last_obs)[0], buffer_actions, new_obs_th)
                 new_qs = self.q_net(new_obs_th).cpu().numpy()
+            self.reset_aspiration(dones)
             new_lambda = ratio(new_qs.min(axis=1), self.policy.aspiration, new_qs.max(axis=1))
 
             self.num_timesteps += env.num_envs
@@ -434,6 +444,7 @@ class ArDQN(DQN):
             with th.no_grad():
                 q = self.q_net(th.tensor(self._last_obs, device=self.device)).cpu().numpy()
             self._last_lambda = ratio(q.min(axis=1), self.policy.initial_aspiration, q.max(axis=1))
+            self.reset_aspiration()
             self.policy.set_training_mode(training_mode)
         return r
 
