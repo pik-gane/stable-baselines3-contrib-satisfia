@@ -308,7 +308,10 @@ class ArDQN(DQN):
                 new_qs = self.q_net(new_obs_th).cpu().numpy()
             self.reset_aspiration(dones)
             new_lambda = ratio(new_qs.min(axis=1), self.policy.aspiration, new_qs.max(axis=1))
-
+            self.logger.record("rollout/lambda", new_lambda.mean())
+            self.logger.record("rollout/aspiration", self.policy.aspiration.mean())
+            self.logger.record_mean("rollout/lambda_mean", new_lambda.mean())
+            self.logger.record_mean("rollout/aspiration_mean", self.policy.aspiration.mean())
             self.num_timesteps += env.num_envs
             num_collected_steps += 1
 
@@ -402,6 +405,7 @@ class ArDQN(DQN):
                     # VecNormalize normalizes the terminal observation
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
+        # Todo: Do we need to do something for lambda in case of done ?
 
         replay_buffer.add_with_lambda(
             self._last_original_obs,
@@ -419,6 +423,10 @@ class ArDQN(DQN):
         if self._vec_normalize_env is not None:
             self._last_original_obs = new_obs_
 
+    def _dump_logs(self) -> None:
+        # Called every `log_interval` episodes
+        super()._dump_logs()
+
     def _excluded_save_params(self) -> List[str]:
         return [
             *super()._excluded_save_params(),
@@ -434,7 +442,7 @@ class ArDQN(DQN):
         tb_log_name: str = "run",
         progress_bar: bool = False,
     ) -> Tuple[int, BaseCallback]:
-        # check if _last_obs will be reset
+        # check if _last_obs and env will be reset in the super call of base_class
         reset = reset_num_timesteps or self._last_obs is None
         r = super()._setup_learn(total_timesteps, callback, reset_num_timesteps, tb_log_name, progress_bar)
         if reset:
