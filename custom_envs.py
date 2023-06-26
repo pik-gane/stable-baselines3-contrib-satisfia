@@ -9,10 +9,11 @@ class MultiarmedBanditsEnv(gym.Env):
 
     metadata = {"render_modes": ["ansi"]}
 
-    def __init__(self, values, deviations, render_mode: Optional[str] = None):
+    def __init__(self, values, deviations, nb_round, render_mode: Optional[str] = None):
         assert len(values) == len(deviations), "values and deviations must have the same length"
         self.values = values
         self.deviations = deviations
+        self.nb_round = nb_round
         self.action_space = gym.spaces.Discrete(len(values))
         self.observation_space = gym.spaces.Discrete(1)
         self.optimal = np.argmax(self.values)
@@ -23,7 +24,7 @@ class MultiarmedBanditsEnv(gym.Env):
         assert self.action_space.contains(action), f"{action!r} ({type(action)}) invalid"
         reward = self.np_random.standard_normal() * self.deviations[action] + self.values[action]
         self.time += 1
-        return self.state, reward, self.time == 3, False, {"optimal": self.optimal}
+        return self.state, reward, self.time == self.nb_round, False, {"optimal": self.optimal}
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         super().reset(seed=seed)
