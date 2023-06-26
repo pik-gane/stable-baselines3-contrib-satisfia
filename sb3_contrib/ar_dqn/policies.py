@@ -133,8 +133,12 @@ class ArDQNPolicy(DQNPolicy):
                     # if all values are higher than aspiration, return the lowest value
                     actions[i] = q_values.argmin()
                 else:
-                    a_minus = q_values[lower].argmax()
-                    a_plus = q_values[higher].argmin()
+                    q_values_for_max = q_values.clone()
+                    q_values_for_max[lower] = th.inf
+                    q_values_for_min = q_values.clone()
+                    q_values_for_min[higher] = -th.inf
+                    a_minus = q_values_for_min.argmax()
+                    a_plus = q_values_for_max.argmin()
                     p = ratio(q_values[a_minus], aspiration, q_values[a_plus])
                     # Else, with probability p return a+
                     if (not deterministic and np.random.rand() <= p) or (p > 0.5 and deterministic):
