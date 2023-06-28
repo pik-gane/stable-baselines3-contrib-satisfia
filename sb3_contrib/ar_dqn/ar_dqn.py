@@ -1,6 +1,6 @@
 import warnings
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, Literal
 
 import numpy as np
 import torch as th
@@ -11,7 +11,9 @@ from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.utils import should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
+from torch import nn
 from torch.nn import functional as F
+from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
 from sb3_contrib.ar_dqn.utils import interpolate, ratio
@@ -39,6 +41,7 @@ class ArDQN(DQN):
     :param mu: the aspiration smoothing coefficient (between 0 and 1) default 0 for no smoothing for lambda
     :param tau: the soft update coefficient ("Polyak update", between 0 and 1) default 1 for hard update
     :param gamma: the discount factor
+    :param loss:
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -72,6 +75,7 @@ class ArDQN(DQN):
         "CnnPolicy": CnnPolicy,
         "MultiInputPolicy": MultiInputPolicy,
     }
+    loss_aliases: Dict[str, nn.Module] = {"MSE": MSELoss, "SmoothL1Loss": SmoothL1Loss}
     # Linear schedule will be defined in `_setup_model()`
     exploration_schedule: Schedule
     q_net: QNetwork
@@ -89,6 +93,7 @@ class ArDQN(DQN):
         mu: float = 0.0,
         tau: float = 1.0,
         gamma: float = 0.99,
+        loss: Literal["MSE", "SmoothL1Loss"] = "MSE",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -143,6 +148,8 @@ class ArDQN(DQN):
             _init_setup_model=_init_setup_model,
         )
         self.mu = mu
+        self.test_env = deepcopy(self.env)
+        self.loss = self.loss_aliases[loss]()
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
@@ -186,9 +193,9 @@ class ArDQN(DQN):
             current_delta_max = th.gather(current_delta_max, dim=1, index=index)
 
             # Compute Huber loss (less sensitive to outliers)
-            q_loss = F.mse_loss(current_q_values, target_q_values)
-            qmin_loss = F.mse_loss(current_delta_min, target_delta_min)
-            qmax_loss = F.mse_loss(current_delta_max, target_delta_max)
+            q_loss = self.loss(current_q_values, target_q_values)
+            qmin_loss = self.loss(current_delta_min, target_delta_min)
+            qmax_loss = self.loss(current_delta_max, target_delta_max)
 
             # Logs
             q_losses.append(q_loss.item())
@@ -205,7 +212,16 @@ class ArDQN(DQN):
 
         # Increase update counter
         self._n_updates += gradient_steps
-
+        if self.test_env is None:
+            self.test_env = deepcopy(self.env)
+        with th.no_grad():
+            reset_obs, _ = self.policy.obs_to_tensor(self.test_env.reset())
+            q = self.q_net(reset_obs)
+            self.logger.record_mean("policy/Q_max_mean", float(q.max().cpu()))
+            self.logger.record_mean("policy/Q_min_mean", float(q.min()))
+            self.logger.record_mean("policy/Q_median_mean", float(q.quantile(q=0.5)))
+            self.logger.record_mean("policy/Q_opt_mean", float((q + self.delta_qmax_net(reset_obs)).max()))
+            self.logger.record_mean("policy/Q_unopt_mean", float((q - self.delta_qmin_net(reset_obs)).min()))
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record_mean("train/mean_q_loss", np.mean(q_losses))
         self.logger.record_mean("train/mean_qmax_loss", np.mean(qmax_losses))
@@ -308,8 +324,6 @@ class ArDQN(DQN):
                 new_qs = self.q_net(new_obs_th).cpu().numpy()
             self.reset_aspiration(dones)
             new_lambda = ratio(new_qs.min(axis=1), self.policy.aspiration, new_qs.max(axis=1))
-            self.logger.record("rollout/lambda", new_lambda.mean())
-            self.logger.record("rollout/aspiration", self.policy.aspiration.mean())
             self.logger.record_mean("rollout/lambda_mean", new_lambda.mean())
             self.logger.record_mean("rollout/aspiration_mean", self.policy.aspiration.mean())
             self.num_timesteps += env.num_envs

@@ -1,4 +1,5 @@
 import warnings
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
@@ -136,7 +137,7 @@ class DQN(OffPolicyAlgorithm):
         self.max_grad_norm = max_grad_norm
         # "epsilon" for the epsilon-greedy exploration
         self.exploration_rate = 0.0
-
+        self.test_env = deepcopy(self.env)
         if _init_setup_model:
             self._setup_model()
 
@@ -221,6 +222,13 @@ class DQN(OffPolicyAlgorithm):
 
         # Increase update counter
         self._n_updates += gradient_steps
+        if self.test_env is None:
+            self.test_env = deepcopy(self.env)
+        with th.no_grad():
+            reset_obs, _ = self.policy.obs_to_tensor(self.test_env.reset())
+            self.logger.record_mean("policy/Q_max_mean", float(self.q_net(reset_obs).max().cpu()))
+            self.logger.record_mean("policy/Q_min_mean", float(self.q_net(reset_obs).min()))
+            self.logger.record("policy/Q_median_mean", float(self.q_net(reset_obs).quantile(q=0.5)))
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/q_loss", np.mean(losses))
