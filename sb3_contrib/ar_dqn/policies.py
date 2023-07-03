@@ -3,12 +3,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.torch_layers import (
-    BaseFeaturesExtractor,
-    CombinedExtractor,
-    FlattenExtractor,
-    NatureCNN,
-)
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, CombinedExtractor, FlattenExtractor, NatureCNN
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from torch import nn
@@ -199,6 +194,13 @@ class ArDQNPolicy(DQNPolicy):
             )
         )
         return data
+
+    def q_values(self, obs: np.ndarray):
+        return self.q_net(self.obs_to_tensor(obs)[0])
+
+    def lambda_ratio(self, obs: np.ndarray, aspiration: Union[float, np.ndarray]) -> th.Tensor:
+        q = self.q_values(obs)
+        return ratio(q.min(dim=1).values, th.tensor(aspiration, device=self.device), q.max(dim=1).values)
 
 
 MlpPolicy = ArDQNPolicy
