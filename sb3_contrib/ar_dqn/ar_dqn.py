@@ -1,6 +1,6 @@
 import warnings
 from copy import deepcopy
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
 import torch as th
@@ -436,10 +436,6 @@ class ArDQN(DQN):
         # Save the unnormalized observation
         if self._vec_normalize_env is not None:
             self._last_original_obs = new_obs_
-
-    def _dump_logs(self) -> None:
-        # Called every `log_interval` episodes
-        super()._dump_logs()
 
     def _excluded_save_params(self) -> List[str]:
         return [
