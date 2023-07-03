@@ -1,11 +1,12 @@
 import warnings
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import gymnasium as gym
 import numpy as np
-
-from stable_baselines3.common import type_aliases
+import torch as th
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
+
 from sb3_contrib.ar_dqn import ArDQN
 
 
@@ -19,7 +20,7 @@ def evaluate_policy(
     reward_threshold: Optional[float] = None,
     return_episode_rewards: bool = False,
     warn: bool = True,
-) -> Union[Tuple[float, float], Tuple[List[float], List[int]]]:
+) -> Tuple[Union[Tuple[float, float], Tuple[List[float], List[int]]], Dict[str, np.ndarray]]:
     """
     Runs policy satisficing for ``n_eval_episodes`` episodes and returns average reward.
     If a vector env is passed in, this divides the episodes to evaluate onto the
@@ -52,6 +53,7 @@ def evaluate_policy(
         Returns ([float], [int]) when ``return_episode_rewards`` is True, first
         list containing per-episode rewards and second containing per-episode lengths
         (in number of steps).
+         # todo: doc
     """
     is_monitor_wrapped = False
     # Avoid circular import
@@ -82,8 +84,15 @@ def evaluate_policy(
     current_lengths = np.zeros(n_envs, dtype="int")
     observations = env.reset()
     states = None
-    episode_starts = np.ones((env.num_envs,), dtype=bool)
+    episode_starts = np.ones((n_envs,), dtype=bool)
     model.switch_to_eval()
+    lambdas = []
+    aspirations = []
+    reward_left = []
+    with th.no_grad():
+        current_lambdas = [[float(l)] for l in model.policy.lambda_ratio(observations, model.policy.initial_aspiration)]
+    current_aspirations = [[model.policy.initial_aspiration] for _ in range(n_envs)]
+    current_rew_left = [[model.policy.initial_aspiration] for _ in range(n_envs)]
     while (episode_counts < episode_count_targets).any():
         actions, states = model.predict(
             observations,  # type: ignore[arg-type]
@@ -93,6 +102,16 @@ def evaluate_policy(
         )
         new_observations, rewards, dones, infos = env.step(actions)
         model.rescale_aspiration(observations, actions, new_observations)
+        # logs
+        new_aspiration = deepcopy(model.policy.aspiration)
+        with th.no_grad():
+            new_lambda = model.policy.lambda_ratio(new_observations, model.policy.aspiration).cpu().numpy()
+        for i in range(n_envs):
+            if not dones[i]:
+                current_lambdas[i].append(new_lambda[i])
+                current_aspirations[i].append(new_aspiration[i])
+            current_rew_left[i].append(current_rew_left[i][-1] - rewards[i])
+
         model.reset_aspiration(dones)
         current_rewards += rewards
         current_lengths += 1
@@ -103,7 +122,6 @@ def evaluate_policy(
                 done = dones[i]
                 info = infos[i]
                 episode_starts[i] = done
-
                 if callback is not None:
                     callback(locals(), globals())
 
@@ -118,14 +136,26 @@ def evaluate_policy(
                             # has been wrapped with it. Use those rewards instead.
                             episode_rewards.append(info["episode"]["r"])
                             episode_lengths.append(info["episode"]["l"])
+                            lambdas.append(current_lambdas[i])
+                            aspirations.append(current_aspirations[i])
+                            reward_left.append(current_rew_left[i])
                             # Only increment at the real end of an episode
                             episode_counts[i] += 1
                     else:
                         episode_rewards.append(current_rewards[i])
                         episode_lengths.append(current_lengths[i])
+                        lambdas.append(current_lambdas[i])
+                        aspirations.append(current_aspirations[i])
+                        reward_left.append(current_rew_left[i])
                         episode_counts[i] += 1
                     current_rewards[i] = 0
                     current_lengths[i] = 0
+                    with th.no_grad():
+                        current_lambdas[i] = [
+                            float(model.policy.lambda_ratio(new_observations[i], model.policy.initial_aspiration))
+                        ]
+                    current_aspirations[i] = [model.policy.initial_aspiration]
+                    current_rew_left[i] = [model.policy.initial_aspiration]
 
         observations = new_observations
 
@@ -134,8 +164,13 @@ def evaluate_policy(
 
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
+    infos = {
+        "lambda": np.array(lambdas).mean(axis=0),
+        "aspiration": np.array(aspirations).mean(axis=0),
+        "reward left": np.array(reward_left).mean(axis=0),
+    }
     if reward_threshold is not None:
         assert mean_reward > reward_threshold, "Mean reward below threshold: " f"{mean_reward:.2f} < {reward_threshold:.2f}"
     if return_episode_rewards:
-        return episode_rewards, episode_lengths
-    return mean_reward, std_reward
+        return (episode_rewards, episode_lengths), infos
+    return (mean_reward, std_reward), infos
