@@ -7,3 +7,7 @@ pygame
 psutil
 stable-baselines3[extra]
 minigrid
+matplotlib
+tqdm
+ray
+plotly
