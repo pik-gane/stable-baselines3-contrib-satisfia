@@ -7,7 +7,7 @@ import ray
 from stable_baselines3.common.logger import configure
 
 from custom_envs import MultiarmedBanditsEnv
-from sb3_contrib import ArQLearning
+from sb3_contrib import ARQLearning
 from sb3_contrib.common.satisficing.evaluation import plot_ar
 from utils import open_tensorboard
 
@@ -50,7 +50,7 @@ if OPEN_TENSORBOARD:
 
 @ray.remote
 def train_model(aspiration, env, log_path, learning_steps, tb_logger):
-    model = ArQLearning(env, policy_kwargs=dict(initial_aspiration=aspiration), gamma=1)
+    model = ARQLearning(env, policy_kwargs=dict(initial_aspiration=aspiration), gamma=1)
     model.set_logger(tb_logger(path.join("ArQLearning", str(round(aspiration, 2)))))
     model.learn(learning_steps, progress_bar=True)
     model.save(path.join(log_path, "ArQLearning", str(round(aspiration, 2)), "models", str(learning_steps)))
@@ -64,6 +64,6 @@ ray_models = [train_model.remote(a, env, log_path, LEARNING_STEPS, tb_logger) fo
 ray.get(ray_models)
 ray.shutdown()
 models = list(
-    map(lambda a: ArQLearning.load(path.join(log_path, "ArQLearning", str(round(a, 2)), "models", str(LEARNING_STEPS))),
+    map(lambda a: ARQLearning.load(path.join(log_path, "ArQLearning", str(round(a, 2)), "models", str(LEARNING_STEPS))),
         aspirations))
 plot_ar(env, models)

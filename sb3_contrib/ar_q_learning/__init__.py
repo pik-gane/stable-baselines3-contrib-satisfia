@@ -1,4 +1,4 @@
-from sb3_contrib.ar_q_learning.policies import ArQLearningPolicy
-from sb3_contrib.ar_q_learning.ar_q_learning import ArQLearning
+from sb3_contrib.ar_q_learning.policies import ARQLearningPolicy
+from sb3_contrib.ar_q_learning.ar_q_learning import ARQLearning
 
-__all__ = ["ArQLearningPolicy", "ArQLearning"]
+__all__ = ["ARQLearningPolicy", "ARQLearning"]

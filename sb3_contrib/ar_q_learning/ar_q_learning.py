@@ -13,34 +13,34 @@ from stable_baselines3.common.utils import get_linear_fn, safe_mean
 from torch.nn import functional as F
 from torch.nn.functional import relu
 
-from sb3_contrib.ar_q_learning.policies import ArQLearningPolicy, QTable, DeltaQTable
+from sb3_contrib.ar_q_learning.policies import ARQLearningPolicy, QTable, DeltaQTable
 from sb3_contrib.common.satisficing.utils import interpolate
 
 SelfArQLearning = TypeVar("SelfArQLearning", bound="ArQLearning")
 
 
-class ArQLearning(BaseAlgorithm):
+class ARQLearning(BaseAlgorithm):
     """
-    Tabular Q-Learning
+    Tabular Q-Learning with Aspiration Rescaling
     """
 
     policy_aliases: Dict[str, Type[BasePolicy]] = {
-        "TabularPolicy": ArQLearningPolicy,
+        "TabularPolicy": ARQLearningPolicy,
     }
     exploration_schedule: Schedule
     q_table: QTable
     delta_qmin_table: DeltaQTable
     delta_qmax_table: DeltaQTable
-    policy: ArQLearningPolicy
+    policy: ARQLearningPolicy
 
     def __init__(
         self,
         env: Union[GymEnv, str, None],
         policy: Union[str, Type[BasePolicy]] = "TabularPolicy",
-        learning_rate: Union[float, Schedule] = 0.5,
+        learning_rate: Union[float, Schedule] = 0.5,  # Jobst: maybe learn slower by default?
         mu: float = 0.0,
         gamma: float = 0.99,
-        exploration_fraction: float = 0.1,
+        exploration_fraction: float = 0.1,  # Jobst: doesn't 0.1 mean that we explore for only the first 10% of the total learning time?
         exploration_initial_eps: float = 1.0,
         exploration_final_eps: float = 0.05,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -60,9 +60,9 @@ class ArQLearning(BaseAlgorithm):
             )
             if policy_kwargs is None:
                 policy_kwargs = {}
-            policy_kwargs["initial_aspiration"] = 10.0
+            policy_kwargs["initial_aspiration"] = 10.0  # Jobst: why 10.0? Maybe 0.0 is more natural?
         super().__init__(
-            ArQLearningPolicy,
+            ARQLearningPolicy,
             env,
             learning_rate,
             policy_kwargs=policy_kwargs,
@@ -110,7 +110,7 @@ class ArQLearning(BaseAlgorithm):
         self,
         observation: np.ndarray,
         state: Optional[Tuple[np.ndarray, ...]] = None,
-        episode_start: Optional[np.ndarray] = None,
+        episode_start: Optional[np.ndarray] = None,  # Jobst: this is currently not used, right?
         deterministic: bool = False,
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
         """
@@ -162,7 +162,7 @@ class ArQLearning(BaseAlgorithm):
             self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
             learning_rate = self.lr_schedule(self._current_progress_remaining)
             # Step
-            actions = self.predict(obs)[0]  # [0] because it also returns state
+            actions = self.predict(obs)[0]  # [0] because it also returns state  # Jobst: why plural if it is only one action?
             new_obs, rewards, dones, infos = self.env.step(actions)
             self.rescale_aspiration(obs, actions, new_obs)
             self.reset_aspiration(dones)
@@ -171,7 +171,7 @@ class ArQLearning(BaseAlgorithm):
             self._on_step()
             self._update_info_buffer(infos, dones)
             self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
-            num_collected_steps += dones.sum()
+            num_collected_steps += dones.sum()  # Jobst: shouldn't this be len(dones) because we want to count all steps and not only the ones where the episode ended?
             self._episode_num += dones.sum()
             if log_interval is not None and self._episode_num - last_log_time >= log_interval:
                 self._dump_logs()
@@ -181,7 +181,7 @@ class ArQLearning(BaseAlgorithm):
             if callback.on_step() is False:
                 break
             # Update Q tables
-            smooth_lambda = interpolate(new_lambda, self.mu, last_lambda)
+            smooth_lambda = interpolate(new_lambda, self.mu, last_lambda)  # Jobst: for the ended episodes, we must ignore the last lambda I believe
             with th.no_grad():
                 v_min = self.q_table(new_obs).min(dim=1).values
                 v_max = self.q_table(new_obs).max(dim=1).values

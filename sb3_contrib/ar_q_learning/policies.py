@@ -20,12 +20,12 @@ class DeltaQTable(QTable):
         self.q_table[...] = 1.0
 
     def forward(self, obs: Union[th.Tensor, np.ndarray], action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
-        return th.nn.functional.relu(super().forward(obs, action))
+        return th.nn.functional.relu(super().forward(obs, action))  # Jobst: does relu work with tables or only with networks?
 
 
-class ArQLearningPolicy(BasePolicy):
+class ARQLearningPolicy(BasePolicy):
     """
-    Policy object that implements a Q-Table.
+    Policy object that implements a Q-Table-based absolute aspiration-based satisficing policy with Aspiration Rescaling.
 
     :param observation_space: Observation space
     :param action_space: Action space
@@ -71,13 +71,13 @@ class ArQLearningPolicy(BasePolicy):
             if len(exact) > 0:
                 if not deterministic:
                     # Choose randomly among actions that satisfy the aspiration
-                    index = np.random.randint(0, len(exact[0]))
+                    index = np.random.randint(0, len(exact[0]-1))  # Jobst: I believe randint is inclusive on both ends
                     actions[i] = exact[0][index]
                 else:
                     actions[i] = exact[0].min()
             else:
                 higher = q_values > aspiration
-                lower = q_values <= aspiration
+                lower = q_values < aspiration  # Jobst: the "=" case is handled by the "exact" case above
                 if not higher.any():
                     # if all values are lower than aspiration, return the highest value
                     actions[i] = q_values.argmax()
@@ -102,7 +102,7 @@ class ArQLearningPolicy(BasePolicy):
     def rescale_aspiration(self, obs: np.ndarray, action: np.ndarray, next_obs: np.ndarray) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
-        get the target aspiration.
+        get the target aspiration as its return-to-go.
 
         :param obs: observation at time t
         :param action: action at time t
@@ -110,7 +110,7 @@ class ArQLearningPolicy(BasePolicy):
         """
         with th.no_grad():
             action = th.as_tensor(action, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_table(obs), dim=1, index=action)
+            q = th.gather(self.q_table(obs), dim=1, index=action)  # Jobst: does this work correctly if action is a tensor rather than just a number?
             q_min = q - th.gather(self.delta_qmin_table(obs), 1, action)
             q_max = q + th.gather(self.delta_qmax_table(obs), 1, action)
             # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
@@ -119,9 +119,9 @@ class ArQLearningPolicy(BasePolicy):
                 warnings.warn(
                     "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.init_aspiration)
                 )
-            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
-            q = self.q_table(next_obs)
-            self.aspiration = interpolate(q.min(dim=1).values, lambda_t1, q.max(dim=1).values).cpu().numpy()
+            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)  # Jobst: why squeeze here if you are combining it with q.min and q.max below, which are not squeezed? Or are they?
+            next_q = self.q_table(next_obs)
+            self.aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()  # Jobst: why .values here?
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
