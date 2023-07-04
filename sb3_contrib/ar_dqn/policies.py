@@ -8,7 +8,7 @@ from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from torch import nn
 
-from sb3_contrib.ar_dqn.utils import interpolate, ratio
+from sb3_contrib.common.satisficing.utils import interpolate, ratio
 
 
 class ArDQNPolicy(DQNPolicy):
@@ -79,7 +79,7 @@ class ArDQNPolicy(DQNPolicy):
         # Add a ReLU to the last layer of delta_qmax_net and delta_qmin_net because we want to have positive values
         self.delta_qmax_net.q_net = nn.Sequential(self.delta_qmax_net.q_net, nn.ReLU())
         self.delta_qmin_net.q_net = nn.Sequential(self.delta_qmin_net.q_net, nn.ReLU())
-        # Super methode will create the optimizer, q_net and q_net_target put set q_net_target into eval mode
+        # Super methode will create the optimizer, q_net and q_net_target and set q_net_target to eval mode
         super()._build(lr_schedule)
 
     # def make_q_nets(self, net_args) -> (QNetwork, QNetwork):

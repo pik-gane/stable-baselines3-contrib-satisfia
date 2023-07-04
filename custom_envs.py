@@ -24,7 +24,7 @@ class MultiarmedBanditsEnv(gym.Env):
         self.nb_round = nb_round
         self.obs_type = obs_type
         self.action_space = gym.spaces.Discrete(len(values))
-        if obs_type is None:
+        if obs_type == "state":
             self.observation_space = gym.spaces.Discrete(1)
         elif obs_type == "one_hot":
             self.observation_space = gym.spaces.Box(low=0, high=1, shape=(nb_round,), dtype=np.float32)

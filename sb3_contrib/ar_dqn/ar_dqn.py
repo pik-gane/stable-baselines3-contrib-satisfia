@@ -12,11 +12,10 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Rollout
 from stable_baselines3.common.utils import should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
-from torch.nn import functional as F
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
-from sb3_contrib.ar_dqn.utils import interpolate, ratio
+from sb3_contrib.common.satisficing.utils import interpolate, ratio
 from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
 
@@ -217,7 +216,7 @@ class ArDQN(DQN):
         with th.no_grad():
             reset_obs, _ = self.policy.obs_to_tensor(self.test_env.reset())
             q = self.q_net(reset_obs)
-            self.logger.record_mean("policy/Q_max_mean", float(q.max().cpu()))
+            self.logger.record_mean("policy/Q_max_mean", float(q.max()))
             self.logger.record_mean("policy/Q_min_mean", float(q.min()))
             self.logger.record_mean("policy/Q_median_mean", float(q.quantile(q=0.5)))
             self.logger.record_mean("policy/Q_opt_mean", float((q + self.delta_qmax_net(reset_obs)).max()))
