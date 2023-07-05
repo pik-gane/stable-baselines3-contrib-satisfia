@@ -122,16 +122,8 @@ class ARQLearningPolicy(BasePolicy):
             q_max = q + th.gather(self.delta_qmax_table(obs), 1, actions)
             # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
             #   chosen as in theory it shouldn't matter.
-<<<<<<< HEAD
-            if (q_min == q_max).any(): # todo remove this once we are sure the .nan_to_num is not a problem
-                warnings.warn(
-                    "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.initial_aspiration)
-                )
-            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)  # Jobst: why squeeze here if you are combining it with q.min and q.max below, which are not squeezed? Or are they?
-=======
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
             # squeeze: n * 1 -> n
->>>>>>> cae8f147fa8eff346262971160c8e8e729460428
             next_q = self.q_table(next_obs)
             self.aspiration = (
                 interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
