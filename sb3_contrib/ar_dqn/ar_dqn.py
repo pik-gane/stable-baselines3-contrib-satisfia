@@ -1,6 +1,10 @@
 import warnings
 from copy import deepcopy
-from typing import Any, Dict, List, Literal, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+try:
+    from typing import Literal
+except ImportError:   # Python <3.8 support:
+    from typing_extensions import Literal
 
 import numpy as np
 import torch as th

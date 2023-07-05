@@ -117,7 +117,7 @@ class ARQLearningPolicy(BasePolicy):
             #   chosen as in theory it shouldn't matter.
             if (q_min == q_max).any(): # todo remove this once we are sure the .nan_to_num is not a problem
                 warnings.warn(
-                    "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.init_aspiration)
+                    "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.initial_aspiration)
                 )
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)  # Jobst: why squeeze here if you are combining it with q.min and q.max below, which are not squeezed? Or are they?
             next_q = self.q_table(next_obs)

@@ -1,5 +1,10 @@
 # Based on https://github.com/magni84/gym_bandits/blob/master/gym_bandits/envs/bandits_env.py
-from typing import Optional, Literal
+from typing import Optional
+
+try:
+    from typing import Literal
+except ImportError:   # Python <3.8 support:
+    from typing_extensions import Literal
 
 import gymnasium as gym
 import numpy as np
