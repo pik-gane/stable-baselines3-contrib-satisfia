@@ -132,16 +132,17 @@ class ARQLearning(BaseAlgorithm):
                 action = np.array([self.action_space.sample() for _ in range(n_batch)])
             else:
                 action = np.array(self.action_space.sample())
+            aspiration_diff = self.policy.aspiration - self.policy.q_table(observation, action).cpu().numpy()
             if self.verbose >= 2:
                 print(f"I am exploring state {int(observation)} and chose action {int(action)}")
         else:
-            action, state = self.policy.predict(observation, state, episode_start, deterministic)
+            action, aspiration_diff = self.policy.predict(observation, state, episode_start, deterministic)
             if self.verbose >= 2:
                 print(
                     f"My aspiration is {float(self.policy.aspiration)} and my current state {int(observation)}\n"
                     f"My Q values were: {list(self.policy.q_table(observation)[0].cpu().numpy())} so I chose action {int(action)}"
                 )
-        return action, state
+        return action, aspiration_diff
 
     def learn(
         self,
@@ -173,11 +174,11 @@ class ARQLearning(BaseAlgorithm):
             self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
             learning_rate = self.lr_schedule(self._current_progress_remaining)
             # Step
-            actions = self.predict(obs)[0]  # [0] because it also returns state
+            actions, aspiration_diff = self.predict(obs)
             new_obs, rewards, dones, infos = self.env.step(actions)
             if self.verbose >= 2:
                 print(f"I receive reward {float(rewards)} and arrive in state {int(new_obs)}\n")
-            self.rescale_aspiration(obs, actions, new_obs)
+            self.rescale_aspiration(obs, actions, new_obs, aspiration_diff=aspiration_diff)
             self.reset_aspiration(dones)
             new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration)
 
@@ -214,9 +215,7 @@ class ARQLearning(BaseAlgorithm):
                 r = th.tensor(rewards, device=self.device)
                 t_dones = th.tensor(dones, device=self.device)
                 q_target = r + self.gamma * t_dones.logical_not() * v
-                delta_qmin_target = (
-                    relu(self.gamma * (v - v_min)) * t_dones.logical_not()
-                )  # todo Jobst: relu seems to make more sense
+                delta_qmin_target = relu(self.gamma * (v - v_min)) * t_dones.logical_not()
                 delta_qmax_target = relu(self.gamma * (v_max - v)) * t_dones.logical_not()
                 if self.verbose >= 2:
                     print()
@@ -271,7 +270,12 @@ class ARQLearning(BaseAlgorithm):
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
 
     def rescale_aspiration(
-        self, obs_t: np.ndarray, a_t: np.ndarray, obs_t1: np.ndarray, dones: Optional[np.ndarray] = None
+        self,
+        obs_t: np.ndarray,
+        a_t: np.ndarray,
+        obs_t1: np.ndarray,
+        dones: Optional[np.ndarray] = None,
+        aspiration_diff: Optional[np.ndarray] = None,
     ) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
@@ -281,7 +285,7 @@ class ARQLearning(BaseAlgorithm):
         :param a_t: actions at time t
         :param obs_t1: observations at time t+1
         """
-        self.policy.rescale_aspiration(obs_t, a_t, obs_t1, dones)
+        self.policy.rescale_aspiration(obs_t, a_t, obs_t1, dones, aspiration_diff)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """

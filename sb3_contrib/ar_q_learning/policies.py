@@ -1,5 +1,5 @@
 import warnings
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, Tuple
 
 import numpy as np
 import torch as th
@@ -18,7 +18,6 @@ class DeltaQTable(QTable):
     ) -> None:
         super().__init__(observation_space, action_space)
         self.q_table[...] = 1.0
-        # self.q_table += th.randn_like(self.q_table) * 0.5  # todo Suggest: Maybe this break the symmetry
 
     def forward(self, obs: Union[th.Tensor, np.ndarray], action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
         return th.nn.functional.relu(super().forward(obs, action))
@@ -58,12 +57,11 @@ class ARQLearningPolicy(BasePolicy):
     def forward(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         return self._predict(obs, deterministic=deterministic)
 
-    def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
+    def _predict(self, obs: th.Tensor, deterministic: bool = True) -> Tuple[th.Tensor, th.Tensor]:
         q_values_batch = self.q_table(obs)
         actions = th.zeros(len(obs), dtype=th.int)
         aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
-        shortfall = th.zeros(len(obs), dtype=th.float)
-        excess = th.zeros(len(obs), dtype=th.float)
+        aspiration_diffs = th.zeros(len(obs), dtype=th.float, device=self.device)
         for i in range(len(obs)):
             q_values: th.Tensor = q_values_batch[i]
             if aspirations.dim() > 0:
@@ -84,11 +82,11 @@ class ARQLearningPolicy(BasePolicy):
                 if not higher.any():
                     # if all values are lower than aspiration, return the highest value
                     actions[i] = q_values.argmax()
-                    shortfall[i] = aspiration - q_values[actions[i]]
+                    aspiration_diffs[i] = aspiration - q_values[actions[i]]
                 elif not lower.any():
                     # if all values are higher than aspiration, return the lowest value
                     actions[i] = q_values.argmin()
-                    excess[i] = q_values[actions[i]] - aspiration
+                    aspiration_diffs[i] = aspiration - q_values[actions[i]]
                 else:
                     q_values_for_max = q_values.clone()
                     q_values_for_max[lower] = th.inf
@@ -102,14 +100,51 @@ class ARQLearningPolicy(BasePolicy):
                         actions[i] = a_plus
                     else:
                         actions[i] = a_minus
-        self.shortfall = shortfall  # Jobst: is this a safe way of passing the shortfall and excess to the rescale method?
-        self.excess = excess
-        return actions
+        return actions, aspiration_diffs
+
+    def predict(
+        self,
+        observation: Union[np.ndarray, Dict[str, np.ndarray]],
+        state: Optional[Tuple[np.ndarray, ...]] = None,
+        episode_start: Optional[np.ndarray] = None,
+        deterministic: bool = False,
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+        """
+        Get the policy action from an observation (and optional hidden state).
+        Includes sugar-coating to handle different observations (e.g. normalizing images).
+
+        :param observation: the input observation
+        :param state: None (only used in recurrent policies)
+        :param episode_start: The last masks (can be None, used in recurrent policies)
+            this correspond to beginning of episodes,
+            where the hidden states of the RNN must be reset.
+        :param deterministic: Whether or not to return deterministic actions.
+        :return: the model's action and the aspiration difference
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.set_training_mode(False)
+
+        observation, vectorized_env = self.obs_to_tensor(observation)
+
+        with th.no_grad():
+            actions, aspiration_diff = self._predict(observation, deterministic=deterministic)
+        # Convert to numpy, and reshape to the original action shape
+        actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))
+        aspiration_diff = aspiration_diff.cpu().numpy()
+
+        # Remove batch dimension if needed
+        if not vectorized_env:
+            actions = actions.squeeze(axis=0)
+
+        return actions, aspiration_diff
 
     def rescale_aspiration(
-        self, obs: np.ndarray, actions: np.ndarray, next_obs: np.ndarray, dones: Optional[np.ndarray] = None
+        self,
+        obs: np.ndarray,
+        actions: np.ndarray,
+        next_obs: np.ndarray,
+        aspiration_diffs: Optional[np.ndarray] = None,
     ) -> None:
-        # todo remove dones
         """
         Rescale the aspiration so that, **in expectation**, the agent will
         get the target aspiration as its return-to-go.
@@ -121,9 +156,7 @@ class ARQLearningPolicy(BasePolicy):
         with th.no_grad():
             actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
             # self.q_table(obs) : n * A, actions : n * 1 -> q : n * 1
-            q = th.gather(
-                self.q_table(obs), dim=1, index=actions
-            )
+            q = th.gather(self.q_table(obs), dim=1, index=actions)
             q_min = q - th.gather(self.delta_qmin_table(obs), 1, actions)
             q_max = q + th.gather(self.delta_qmax_table(obs), 1, actions)
             # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
@@ -131,15 +164,9 @@ class ARQLearningPolicy(BasePolicy):
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
             # squeeze: n * 1 -> n
             next_q = self.q_table(next_obs)
-            self.aspiration = (
-                interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
-            ) + self.shortfall - self.excess
-        if (
-            dones is not None and (q_min == q_max)[1 - dones].any()
-        ):  # todo remove this once we are sure the .nan_to_num is not a problem
-            warnings.warn(
-                "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.initial_aspiration)
-            )
+            self.aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
+            if aspiration_diffs is not None:
+                self.aspiration += aspiration_diffs
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
