@@ -3,11 +3,11 @@ from typing import Union, Optional
 import numpy as np
 import torch as th
 from gymnasium.vector.utils import spaces
-from stable_baselines3.common.policies import BasePolicy
+from stable_baselines3.common.policies import BasePolicy, BaseModel
 from torch import nn
 
 
-class QTable(BasePolicy):  # Jobst: Why is this a policy? It doesn't predict an action, but a Q-value. Maybe it should be a subclass of BaseModel instead?
+class QTable(BaseModel):
     def __init__(
         self,
         observation_space: spaces.Discrete,
@@ -19,8 +19,7 @@ class QTable(BasePolicy):  # Jobst: Why is this a policy? It doesn't predict an 
         )
         self.q_table = nn.Parameter(th.zeros(observation_space.n, action_space.n), requires_grad=False)
 
-    def forward(self, obs: Union[th.Tensor, np.ndarray],
-                action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
+    def forward(self, obs: Union[th.Tensor, np.ndarray], action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
         """
         Predict the q-values. Returns the Q values for all actions if `action` is None
 
@@ -33,12 +32,9 @@ class QTable(BasePolicy):  # Jobst: Why is this a policy? It doesn't predict an 
         else:
             return self.q_table[obs, action]
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = True) -> th.Tensor:
-        raise NotImplementedError("A Q table can't predict")
-
     def update_table(
-        self, obs: Union[np.ndarray, th.Tensor], 
-        actions: Union[np.ndarray, th.Tensor],  # Jobst: Why is this plural? Shouldn't it be action?
+        self, obs: Union[np.ndarray, th.Tensor],
+        actions: Union[np.ndarray, th.Tensor],
         target: th.Tensor, lr: float
     ) -> None:
         """
@@ -49,7 +45,7 @@ class QTable(BasePolicy):  # Jobst: Why is this a policy? It doesn't predict an 
         :param target: Target Q-Values
         :param lr: Learning rate
         """
-        self.q_table[obs, actions] += lr * (target - self.q_table[obs, actions])
+        self.q_table[obs, actions] += lr * (target - self.q_table[obs, actions]).mean()
 
 
 class QLearningPolicy(BasePolicy):
@@ -80,4 +76,5 @@ class QLearningPolicy(BasePolicy):
         return self._predict(obs, deterministic=deterministic)
 
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
-        return self.q_table(obs).argmax(dim=1).reshape(-1)  # Jobst: is q_table(obs) calling the forward method of QTable? If so, doesn't that return a 1d tensor, indexed on action alone? If so, why do you have dim=1 instead of dim=0 or no dim at all?
+        # Obs : n, self.q_table(obs): n*A argmax-> n*1 reshape->n
+        return self.q_table(obs).argmax(dim=1).reshape(-1)

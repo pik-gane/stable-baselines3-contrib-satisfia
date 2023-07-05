@@ -18,9 +18,10 @@ class DeltaQTable(QTable):
     ) -> None:
         super().__init__(observation_space, action_space)
         self.q_table[...] = 1.0
+        # self.q_table += th.randn_like(self.q_table) * 0.5  # todo Suggest: Maybe this break the symmetry
 
     def forward(self, obs: Union[th.Tensor, np.ndarray], action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
-        return th.nn.functional.relu(super().forward(obs, action))  # Jobst: does relu work with tables or only with networks?
+        return th.nn.functional.relu(super().forward(obs, action))
 
 
 class ARQLearningPolicy(BasePolicy):
@@ -71,13 +72,13 @@ class ARQLearningPolicy(BasePolicy):
             if len(exact) > 0:
                 if not deterministic:
                     # Choose randomly among actions that satisfy the aspiration
-                    index = np.random.randint(0, len(exact[0]-1))  # Jobst: I believe randint is inclusive on both ends
+                    index = np.random.randint(0, len(exact[0]))
                     actions[i] = exact[0][index]
                 else:
                     actions[i] = exact[0].min()
             else:
                 higher = q_values > aspiration
-                lower = q_values < aspiration  # Jobst: the "=" case is handled by the "exact" case above
+                lower = q_values < aspiration
                 if not higher.any():
                     # if all values are lower than aspiration, return the highest value
                     actions[i] = q_values.argmax()
@@ -99,29 +100,48 @@ class ARQLearningPolicy(BasePolicy):
                         actions[i] = a_minus
         return actions
 
-    def rescale_aspiration(self, obs: np.ndarray, action: np.ndarray, next_obs: np.ndarray) -> None:
+    def rescale_aspiration(
+        self, obs: np.ndarray, actions: np.ndarray, next_obs: np.ndarray, dones: Optional[np.ndarray] = None
+    ) -> None:
+        # todo remove dones
         """
         Rescale the aspiration so that, **in expectation**, the agent will
         get the target aspiration as its return-to-go.
 
         :param obs: observation at time t
-        :param action: action at time t
+        :param actions: action at time t
         :param next_obs: observation at time t+1
         """
         with th.no_grad():
-            action = th.as_tensor(action, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_table(obs), dim=1, index=action)  # Jobst: does this work correctly if action is a tensor rather than just a number?
-            q_min = q - th.gather(self.delta_qmin_table(obs), 1, action)
-            q_max = q + th.gather(self.delta_qmax_table(obs), 1, action)
+            actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
+            # self.q_table(obs) : n * A, actions : n * 1 -> q : n * 1
+            q = th.gather(
+                self.q_table(obs), dim=1, index=actions
+            )
+            q_min = q - th.gather(self.delta_qmin_table(obs), 1, actions)
+            q_max = q + th.gather(self.delta_qmax_table(obs), 1, actions)
             # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
             #   chosen as in theory it shouldn't matter.
+<<<<<<< HEAD
             if (q_min == q_max).any(): # todo remove this once we are sure the .nan_to_num is not a problem
                 warnings.warn(
                     "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.initial_aspiration)
                 )
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)  # Jobst: why squeeze here if you are combining it with q.min and q.max below, which are not squeezed? Or are they?
+=======
+            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
+            # squeeze: n * 1 -> n
+>>>>>>> cae8f147fa8eff346262971160c8e8e729460428
             next_q = self.q_table(next_obs)
-            self.aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()  # Jobst: why .values here?
+            self.aspiration = (
+                interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
+            )
+        if (
+            dones is not None and (q_min == q_max)[1 - dones].any()
+        ):  # todo remove this once we are sure the .nan_to_num is not a problem
+            warnings.warn(
+                "q_min and q_max are equal, this is weird. Happened for aspiration {}".format(self.initial_aspiration)
+            )
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
@@ -150,5 +170,6 @@ class ARQLearningPolicy(BasePolicy):
         q = self.q_values(obs)
         q_min = q.min(dim=1).values
         q_max = q.max(dim=1).values
-        nan_lambda = ratio(q_min, th.tensor(aspiration, device=self.device), q_max)
-        return nan_lambda.nan_to_num(nan=0.5)
+        lambdas = ratio(q_min, th.tensor(aspiration, device=self.device), q_max)
+        lambdas[q_max == q_min] = 0.5  # If q_max == q_min, we set lambda to 0.5, this should not matter
+        return lambdas

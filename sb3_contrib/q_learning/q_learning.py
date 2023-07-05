@@ -21,8 +21,8 @@ class QLearning(BaseAlgorithm):
     Tabular Q-Learning
     """
 
-    policy_aliases: Dict[str, Type[BasePolicy]] = {
-        "TabularPolicy": QLearningPolicy,
+    policy_aliases: Dict[str, Type[QLearningPolicy]] = {
+        "QLearningPolicy": QLearningPolicy,
     }
     exploration_schedule: Schedule
     q_table: QTable
@@ -30,8 +30,8 @@ class QLearning(BaseAlgorithm):
 
     def __init__(
         self,
-        # policy: Union[str, Type[BasePolicy]], for now we don't need it
         env: Union[GymEnv, str, None],
+        policy: Union[str, Type[QLearningPolicy]] = "QLearningPolicy",
         learning_rate: Union[float, Schedule] = 0.5,
         gamma: float = 0.99,
         exploration_fraction: float = 0.1,
@@ -46,7 +46,7 @@ class QLearning(BaseAlgorithm):
         _init_setup_model: bool = True,
     ) -> None:
         super().__init__(
-            QLearningPolicy,
+            policy,
             env,
             learning_rate,
             policy_kwargs=policy_kwargs,
