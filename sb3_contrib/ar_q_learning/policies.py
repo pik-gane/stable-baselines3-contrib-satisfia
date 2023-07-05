@@ -62,6 +62,8 @@ class ARQLearningPolicy(BasePolicy):
         q_values_batch = self.q_table(obs)
         actions = th.zeros(len(obs), dtype=th.int)
         aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
+        shortfall = th.zeros(len(obs), dtype=th.float)
+        excess = th.zeros(len(obs), dtype=th.float)
         for i in range(len(obs)):
             q_values: th.Tensor = q_values_batch[i]
             if aspirations.dim() > 0:
@@ -82,9 +84,11 @@ class ARQLearningPolicy(BasePolicy):
                 if not higher.any():
                     # if all values are lower than aspiration, return the highest value
                     actions[i] = q_values.argmax()
+                    shortfall[i] = aspiration - q_values[actions[i]]
                 elif not lower.any():
                     # if all values are higher than aspiration, return the lowest value
                     actions[i] = q_values.argmin()
+                    excess[i] = q_values[actions[i]] - aspiration
                 else:
                     q_values_for_max = q_values.clone()
                     q_values_for_max[lower] = th.inf
@@ -98,6 +102,8 @@ class ARQLearningPolicy(BasePolicy):
                         actions[i] = a_plus
                     else:
                         actions[i] = a_minus
+        self.shortfall = shortfall  # Jobst: is this a safe way of passing the shortfall and excess to the rescale method?
+        self.excess = excess
         return actions
 
     def rescale_aspiration(
@@ -127,7 +133,7 @@ class ARQLearningPolicy(BasePolicy):
             next_q = self.q_table(next_obs)
             self.aspiration = (
                 interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
-            )
+            ) + self.shortfall - self.excess
         if (
             dones is not None and (q_min == q_max)[1 - dones].any()
         ):  # todo remove this once we are sure the .nan_to_num is not a problem
