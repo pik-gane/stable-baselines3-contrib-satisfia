@@ -151,7 +151,6 @@ class ArDQN(DQN):
             _init_setup_model=_init_setup_model,
         )
         self.mu = mu
-        self.test_env = deepcopy(self.env)
         self.loss = self.loss_aliases[loss]()
 
     def _create_aliases(self) -> None:
@@ -242,6 +241,7 @@ class ArDQN(DQN):
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
     ) -> SelfArDQN:
+        # noinspection PyTypeChecker
         return super().learn(
             total_timesteps=total_timesteps,
             callback=callback,
@@ -299,24 +299,15 @@ class ArDQN(DQN):
         if env.num_envs > 1:
             assert train_freq.unit == TrainFrequencyUnit.STEP, "You must use only one env when doing episodic training."
 
-        # Vectorize action noise if needed
-        if action_noise is not None and env.num_envs > 1 and not isinstance(action_noise, VectorizedActionNoise):
-            action_noise = VectorizedActionNoise(action_noise, env.num_envs)
-
-        if self.use_sde:
-            self.actor.reset_noise(env.num_envs)
-
         callback.on_rollout_start()
         continue_training = True
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
-                # Sample a new noise matrix
-                self.actor.reset_noise(env.num_envs)
-
+            if self.num_timesteps < learning_starts:
+                self.exploration_rate = 1.0
             # Select action randomly or according to policy
             actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
 
-            # Rescale and perform action
+            # Perform action
             new_obs, rewards, dones, infos = env.step(actions)
 
             # Rescale aspiration
@@ -342,7 +333,7 @@ class ArDQN(DQN):
             self._update_info_buffer(infos, dones)
 
             # Store data in replay buffer (normalized action and unnormalized observation)
-            self._store_ar_transition(replay_buffer, buffer_actions, new_obs, new_lambda, rewards, dones, infos)
+            self._store_ar_transition(replay_buffer, actions, new_obs, new_lambda, rewards, dones, infos)
 
             self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
 
@@ -357,11 +348,6 @@ class ArDQN(DQN):
                     # Update stats
                     num_collected_episodes += 1
                     self._episode_num += 1
-
-                    if action_noise is not None:
-                        kwargs = dict(indices=[idx]) if env.num_envs > 1 else {}
-                        action_noise.reset(**kwargs)
-
                     # Log training infos
                     if log_interval is not None and self._episode_num % log_interval == 0:
                         self._dump_logs()
@@ -422,7 +408,6 @@ class ArDQN(DQN):
                     # VecNormalize normalizes the terminal observation
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
-        # Todo: Do we need to do something for lambda in case of done ?
 
         replay_buffer.add_with_lambda(
             self._last_original_obs,
@@ -477,6 +462,13 @@ class ArDQN(DQN):
         :param env: The environment for learning a policy
         :param force_reset: Ignored, the function will always make is if this is True
         """
+        if not force_reset:
+            warnings.warn(
+                UserWarning(
+                    "force_reset is ignored in AR DQN. The environment will always be reset to avoid "
+                    "weird aspirations setups"
+                )
+            )
         super().set_env(env, True)
         # Update the aspiration shape according to the env
         self.policy.reset_aspiration()
