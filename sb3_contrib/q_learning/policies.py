@@ -1,9 +1,9 @@
-from typing import Union, Optional
+from typing import Optional, Union
 
 import numpy as np
 import torch as th
 from gymnasium.vector.utils import spaces
-from stable_baselines3.common.policies import BasePolicy, BaseModel
+from stable_baselines3.common.policies import BaseModel, BasePolicy
 from torch import nn
 
 
@@ -17,7 +17,7 @@ class QTable(BaseModel):
             observation_space,
             action_space,
         )
-        self.q_table = nn.Parameter(th.zeros(observation_space.n, action_space.n), requires_grad=False)
+        self.q_table = nn.Parameter(th.randn((observation_space.n, action_space.n)), requires_grad=False)
 
     def forward(self, obs: Union[th.Tensor, np.ndarray], action: Optional[Union[th.Tensor, np.ndarray]] = None) -> th.Tensor:
         """
@@ -33,9 +33,7 @@ class QTable(BaseModel):
             return self.q_table[obs, action]
 
     def update_table(
-        self, obs: Union[np.ndarray, th.Tensor],
-        actions: Union[np.ndarray, th.Tensor],
-        target: th.Tensor, lr: float
+        self, obs: Union[np.ndarray, th.Tensor], actions: Union[np.ndarray, th.Tensor], target: th.Tensor, lr: float
     ) -> None:
         """
         Update the Q-Table.
