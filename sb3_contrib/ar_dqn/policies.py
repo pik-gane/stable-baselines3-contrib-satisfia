@@ -5,13 +5,14 @@ import torch as th
 from gymnasium import spaces
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, CombinedExtractor, FlattenExtractor, NatureCNN
 from stable_baselines3.common.type_aliases import Schedule
-from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
+from stable_baselines3.dqn.policies import QNetwork
 from torch import nn
 
+from sb3_contrib.common.satisficing.policies import ARQPolicy
 from sb3_contrib.common.satisficing.utils import interpolate, ratio
 
 
-class ArDQNPolicy(DQNPolicy):
+class ArDQNPolicy(ARQPolicy):
     """
     Policy class with Q-Value Net and target net for DQN
 
@@ -52,20 +53,35 @@ class ArDQNPolicy(DQNPolicy):
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.aspiration: Union[float, np.ndarray] = initial_aspiration
-        self.initial_aspiration = initial_aspiration
         super().__init__(
             observation_space,
             action_space,
-            lr_schedule,
-            net_arch=net_arch,
-            activation_fn=activation_fn,
+            initial_aspiration,
             features_extractor_class=features_extractor_class,
             features_extractor_kwargs=features_extractor_kwargs,
-            normalize_images=normalize_images,
             optimizer_class=optimizer_class,
             optimizer_kwargs=optimizer_kwargs,
+            normalize_images=normalize_images,
         )
+
+        if net_arch is None:
+            if features_extractor_class == NatureCNN:
+                net_arch = []
+            else:
+                net_arch = [64, 64]
+
+        self.net_arch = net_arch
+        self.activation_fn = activation_fn
+
+        self.net_args = {
+            "observation_space": self.observation_space,
+            "action_space": self.action_space,
+            "net_arch": self.net_arch,
+            "activation_fn": self.activation_fn,
+            "normalize_images": normalize_images,
+        }
+
+        self._build(lr_schedule)
 
     def _build(self, lr_schedule: Schedule) -> None:
         """
@@ -80,7 +96,23 @@ class ArDQNPolicy(DQNPolicy):
         self.delta_qmax_net.q_net = nn.Sequential(self.delta_qmax_net.q_net, nn.ReLU())
         self.delta_qmin_net.q_net = nn.Sequential(self.delta_qmin_net.q_net, nn.ReLU())
         # Super methode will create the optimizer, q_net and q_net_target and set q_net_target to eval mode
-        super()._build(lr_schedule)
+        self.q_net = self.make_q_net()
+        self.q_net_target = self.make_q_net()
+        self.q_net_target.load_state_dict(self.q_net.state_dict())
+        self.q_net_target.set_training_mode(False)
+
+        # Setup optimizer with initial learning rate
+        self.optimizer = self.optimizer_class(  # type: ignore[call-arg]
+            self.parameters(),
+            lr=lr_schedule(1),
+            **self.optimizer_kwargs,
+        )
+        super()._create_aliases(self.q_net, self.q_net_target, self.delta_qmin_net, self.delta_qmax_net)
+
+    def make_q_net(self) -> QNetwork:
+        # Make sure we always have separate networks for features extractors etc
+        net_args = self._update_features_extractor(self.net_args, features_extractor=None)
+        return QNetwork(**net_args).to(self.device)
 
     # def make_q_nets(self, net_args) -> (QNetwork, QNetwork):
     #     # todo: remove if no target are needed for qmin and qmax
@@ -97,51 +129,6 @@ class ArDQNPolicy(DQNPolicy):
     #     target_net.set_training_mode(False)
     #     return net, target_net
 
-    def _predict(self, obs: th.Tensor, deterministic: bool = False) -> th.Tensor:
-        """
-        If deterministic is false, will return the action which Q-value is closest to the aspiration.
-        """
-        # todo?: using a for loop is crappy, if it's too slow, we could rewrite this using pytorch
-        q_values_batch = self.q_net(obs)
-        actions = th.zeros(len(obs), dtype=th.int)
-        aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
-        for i in range(len(obs)):
-            q_values = q_values_batch[i]
-            if aspirations.dim() > 0:
-                aspiration = aspirations[i]
-            else:
-                aspiration = aspirations
-            exact = (q_values == aspiration).nonzero()
-            if len(exact) > 0:
-                if not deterministic:
-                    index = np.random.randint(0, len(exact[0]))
-                    actions[i] = exact[0][index]
-                else:
-                    actions[i] = exact[0].min()
-            else:
-                higher = q_values > aspiration
-                lower = q_values <= aspiration
-                if not higher.any():
-                    # if all values are lower than aspiration, return the highest value
-                    actions[i] = q_values.argmax()
-                elif not lower.any():
-                    # if all values are higher than aspiration, return the lowest value
-                    actions[i] = q_values.argmin()
-                else:
-                    q_values_for_max = q_values.clone()
-                    q_values_for_max[lower] = th.inf
-                    q_values_for_min = q_values.clone()
-                    q_values_for_min[higher] = -th.inf
-                    a_minus = q_values_for_min.argmax()
-                    a_plus = q_values_for_max.argmin()
-                    p = ratio(q_values[a_minus], aspiration, q_values[a_plus])
-                    # Else, with probability p return a+
-                    if (not deterministic and np.random.rand() <= p) or (p > 0.5 and deterministic):
-                        actions[i] = a_plus
-                    else:
-                        actions[i] = a_minus
-        return actions
-
     def set_training_mode(self, mode: bool) -> None:
         """
         Put the policy in either training or evaluation mode.
@@ -155,52 +142,21 @@ class ArDQNPolicy(DQNPolicy):
         self.delta_qmin_net.set_training_mode(mode)
         self.training = mode
 
-    def rescale_aspiration(self, obs_t: th.Tensor, a_t: np.ndarray, obs_t1: th.Tensor) -> None:
-        """
-        Rescale the aspiration so that, **in expectation**, the agent will
-        get the target aspiration.
-
-        :param obs_t: observation at time t
-        :param a_t: action at time t
-        :param obs_t1: observation at time t+1
-        """
-        with th.no_grad():
-            a_t = th.as_tensor(a_t, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_net(obs_t), dim=1, index=a_t)
-            q_min = q - th.gather(self.delta_qmin_net(obs_t), 1, a_t)
-            q_max = q + th.gather(self.delta_qmax_net(obs_t), 1, a_t)
-            # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
-            #   chosen as in theory it shouldn't matter.
-            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
-            q = self.q_net_target(obs_t1)
-            self.aspiration = interpolate(q.min(dim=1).values, lambda_t1, q.max(dim=1).values).cpu().numpy()
-
-    def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
-        """
-        Reset the current aspiration to the initial one
-
-        :param dones: if not None, reset only the aspiration that correspond to the done environments
-        """
-        if dones is None:
-            self.aspiration = self.initial_aspiration
-        else:
-            self.aspiration[dones] = self.initial_aspiration
-
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         data = super()._get_constructor_parameters()
+
         data.update(
             dict(
-                initial_aspiration=self.initial_aspiration,
+                net_arch=self.net_args["net_arch"],
+                activation_fn=self.net_args["activation_fn"],
+                lr_schedule=self._dummy_schedule,  # dummy lr schedule, not needed for loading policy alone
+                optimizer_class=self.optimizer_class,
+                optimizer_kwargs=self.optimizer_kwargs,
+                features_extractor_class=self.features_extractor_class,
+                features_extractor_kwargs=self.features_extractor_kwargs,
             )
         )
         return data
-
-    def q_values(self, obs: np.ndarray):
-        return self.q_net(self.obs_to_tensor(obs)[0])
-
-    def lambda_ratio(self, obs: np.ndarray, aspiration: Union[float, np.ndarray]) -> th.Tensor:
-        q = self.q_values(obs)
-        return ratio(q.min(dim=1).values, th.tensor(aspiration, device=self.device), q.max(dim=1).values)
 
 
 MlpPolicy = ArDQNPolicy

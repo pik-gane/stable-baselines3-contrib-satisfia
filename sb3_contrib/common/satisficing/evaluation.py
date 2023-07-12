@@ -4,20 +4,24 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import gymnasium as gym
 import numpy as np
+import plotly.graph_objects as go
 import torch as th
+from plotly.graph_objs import Figure
+from plotly.subplots import make_subplots
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
 from tqdm import tqdm
-from sb3_contrib.ar_dqn import ArDQN
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
+from sb3_contrib.ar_dqn import ARDQN
+from sb3_contrib.common.satisficing.algorithms import ARAlgorithm
 
 
 def evaluate_policy(
-    model: ArDQN,
+    model: ARAlgorithm,
     env: Union[gym.Env, VecEnv],
     n_eval_episodes: int = 10,
     deterministic: bool = False,
+    use_diff: bool = True,
     render: bool = False,
     callback: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None,
     reward_threshold: Optional[float] = None,
@@ -97,14 +101,14 @@ def evaluate_policy(
     current_aspirations = [[model.policy.initial_aspiration] for _ in range(n_envs)]
     current_rew_left = [[model.policy.initial_aspiration] for _ in range(n_envs)]
     while (episode_counts < episode_count_targets).any():
-        actions, states = model.predict(
+        actions, aspiration_diff = model.predict(
             observations,  # type: ignore[arg-type]
             state=states,
             episode_start=episode_starts,
             deterministic=deterministic,
         )
         new_observations, rewards, dones, infos = env.step(actions)
-        model.rescale_aspiration(observations, actions, new_observations)
+        model.rescale_aspiration(observations, actions, new_observations, aspiration_diff if use_diff else None, use_q_target=False)
         # logs
         new_aspiration = deepcopy(model.policy.aspiration)
         with th.no_grad():
@@ -155,7 +159,7 @@ def evaluate_policy(
                     current_lengths[i] = 0
                     with th.no_grad():
                         current_lambdas[i] = [
-                            float(model.policy.lambda_ratio(new_observations[i].reshape(1), model.policy.initial_aspiration))
+                            float(model.policy.lambda_ratio(new_observations[i], model.policy.initial_aspiration))
                         ]
                     current_aspirations[i] = [model.policy.initial_aspiration]
                     current_rew_left[i] = [model.policy.initial_aspiration]
@@ -179,7 +183,7 @@ def evaluate_policy(
     return (mean_reward, std_reward), infos
 
 
-def plot_ar(env, models, n_eval_episodes=500):
+def plot_ar(env, models, n_eval_episodes: int = 100) -> Figure:
     eval_env = Monitor(env)
 
     # Create subplots
@@ -197,15 +201,57 @@ def plot_ar(env, models, n_eval_episodes=500):
     mean_rewards = []
     std_rewards = []
 
-    for model in tqdm(models):
+    # create a continuous colorscale with len(models) colors that goes from green to red
+    if len(models) > 1:
+        colorscale = [
+            f"rgb({int(255 * (1 - i / (len(models) - 1)))}, {int(255 * i / (len(models) - 1))}, 0)" for i in range(len(models))
+        ]
+    else:
+        colorscale = ["rgb(0, 255, 0)"]
+
+    for i in tqdm(range(len(models))):
+        model = models[i]
         (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes)
         mean_rewards.append(m)
         std_rewards.append(std)
         a = model.policy.initial_aspiration
 
-        fig.add_trace(go.Scatter(y=infos["lambda"], name=str(round(a, 1))), row=1, col=1)
-        fig.add_trace(go.Scatter(y=infos["aspiration"], name=str(round(a, 1)), showlegend=False), row=2, col=1)
-        fig.add_trace(go.Scatter(y=infos["reward left"], name=str(round(a, 1)), showlegend=False), row=3, col=1)
+        fig.add_trace(
+            go.Scatter(
+                y=infos["lambda"],
+                name=str(round(a, 1)),
+                line=dict(
+                    color=colorscale[i],
+                ),
+                legendgroup=str(round(a, 1)),
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                y=infos["aspiration"],
+                line=dict(
+                    color=colorscale[i],
+                ),
+                showlegend=False,
+                legendgroup=str(round(a, 1)),
+            ),
+            row=2,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                y=infos["reward left"],
+                line=dict(
+                    color=colorscale[i],
+                ),
+                showlegend=False,
+                legendgroup=str(round(a, 1)),
+            ),
+            row=3,
+            col=1,
+        )
 
     aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
     mean_rewards = np.array(mean_rewards)
@@ -215,9 +261,10 @@ def plot_ar(env, models, n_eval_episodes=500):
         go.Scatter(
             x=aspirations,
             y=mean_rewards,
-            mode="lines",
             name="Mean reward over 500 episodes",
-            line=dict(color="rgb(0,176,246)"),
+            line=dict(
+                color="rgb(0,176,246)",
+            ),
         ),
         row=4,
         col=1,
@@ -261,3 +308,127 @@ def plot_ar(env, models, n_eval_episodes=500):
     fig.update_xaxes(title_text="Environment steps", row=3, col=1)
 
     fig.show(renderer="browser")
+    return fig
+
+
+def plot_ar_mu(env, models, n_eval_episodes: int = 500) -> Figure:
+    eval_env = Monitor(env)
+
+    # Create subplots
+    fig = make_subplots(
+        rows=4,
+        cols=1,
+        subplot_titles=(
+            "Mean Lambda for each step",
+            "Mean Aspiration Value for each step",
+            "Remaining reward",
+            "Mean Reward over 500 episodes",
+        ),
+    )
+
+    mean_rewards = []
+    std_rewards = []
+
+    # create a continuous colorscale with len(models) colors that goes from green to red
+    if len(models) > 1:
+        colorscale = [
+            f"rgb({int(255 * (1 - i / (len(models) - 1)))}, {int(255 * i / (len(models) - 1))}, 0)" for i in range(len(models))
+        ]
+    else:
+        colorscale = ["rgb(0, 255, 0)"]
+
+    for i in tqdm(range(len(models))):
+        model = models[i]
+        (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes)
+        mean_rewards.append(m)
+        std_rewards.append(std)
+
+        fig.add_trace(
+            go.Scatter(
+                y=infos["lambda"],
+                name=str(round(model.mu, 2)),
+                line=dict(
+                    color=colorscale[i],
+                ),
+                legendgroup=str(round(model.mu, 2)),
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                y=infos["aspiration"],
+                line=dict(
+                    color=colorscale[i],
+                ),
+                showlegend=False,
+                legendgroup=str(round(model.mu, 2)),
+            ),
+            row=2,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                y=infos["reward left"],
+                line=dict(
+                    color=colorscale[i],
+                ),
+                showlegend=False,
+                legendgroup=str(round(model.mu, 2)),
+            ),
+            row=3,
+            col=1,
+        )
+
+    mus = list(map(lambda m: m.mu, models))
+    mean_rewards = np.array(mean_rewards)
+    std_rewards = np.array(std_rewards)
+
+    fig.add_trace(
+        go.Scatter(
+            x=mus,
+            y=mean_rewards,
+            name="Mean reward over 500 episodes",
+            line=dict(
+                color="rgb(0,176,246)",
+            ),
+        ),
+        row=4,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(x=mus, y=mean_rewards + std_rewards, mode="lines", showlegend=False, line=dict(color="rgba(0,0,0,0)")),
+        row=4,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=mus,
+            y=mean_rewards - std_rewards,
+            mode="lines",
+            fill="tonexty",
+            name="Reward Standard Deviation",
+            line=dict(color="rgba(0,0,0,0)"),
+            fillcolor="rgba(0,176,246,0.2)",
+        ),
+        row=4,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(x=mus, y=mus, mode="lines", line=dict(dash="dash", color="rgba(0,0,0,0.5)"), showlegend=False),
+        row=4,
+        col=1,
+    )
+
+    fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
+    fig.update_xaxes(title_text="Mu", row=4, col=1)
+    fig.update_yaxes(title_text="Mean reward", row=4, col=1)
+    fig.update_yaxes(title_text="Lambda", row=1, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=1, col=1)
+    fig.update_yaxes(title_text="Aspiration", row=2, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=2, col=1)
+    fig.update_yaxes(title_text="Remaining reward", row=3, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=3, col=1)
+
+    fig.show(renderer="browser")
+    return fig
