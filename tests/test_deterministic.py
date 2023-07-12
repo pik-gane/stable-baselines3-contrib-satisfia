@@ -4,7 +4,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib import ARS, QRDQN, TQC, ArDQN, RecurrentPPO
+from sb3_contrib import ARS, QRDQN, TQC, ARDQN, RecurrentPPO
 from sb3_contrib.common.vec_env import AsyncEval
 
 N_STEPS_TRAINING = 500
@@ -13,7 +13,7 @@ ARS_MULTI = "ars_multi"
 
 
 # @pytest.mark.parametrize("algo", [ARS, QRDQN, TQC, ARS_MULTI, RecurrentPPO, ArDQN])
-@pytest.mark.parametrize("algo", [ArDQN])
+@pytest.mark.parametrize("algo", [ARDQN])
 def test_deterministic_training_common(algo):
     results = [[], []]
     rewards = [[], []]
@@ -35,7 +35,7 @@ def test_deterministic_training_common(algo):
             }
         )
     else:
-        if algo in {QRDQN, ArDQN}:
+        if algo in {QRDQN, ARDQN}:
             env_id = "CartPole-v1"
             kwargs.update({"learning_starts": 100, "target_update_interval": 100})
         elif algo == ARS:
@@ -59,7 +59,7 @@ def test_deterministic_training_common(algo):
         obs = env.reset()
         states = None
         episode_start = None
-        if algo in {ArDQN}:
+        if algo in {ARDQN}:
             model.switch_to_eval()
         for _ in range(100):
             action, states = model.predict(obs, state=states, episode_start=episode_start, deterministic=False)

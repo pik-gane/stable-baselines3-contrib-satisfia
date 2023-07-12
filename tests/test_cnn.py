@@ -9,12 +9,12 @@ from stable_baselines3.common.envs import FakeImageEnv
 from stable_baselines3.common.utils import zip_strict
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecTransposeImage, is_vecenv_wrapped
 
-from sb3_contrib import QRDQN, TQC, TRPO, ArDQN, MaskablePPO, RecurrentPPO
+from sb3_contrib import QRDQN, TQC, TRPO, ARDQN, MaskablePPO, RecurrentPPO
 from sb3_contrib.common.wrappers import ActionMasker
 
 
 # @pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO, DDQN])
-@pytest.mark.parametrize("model_class", [ArDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
 def test_cnn(tmp_path, model_class, share_features_extractor):
     SAVE_NAME = "cnn_model.zip"
@@ -41,7 +41,7 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
                 features_extractor_kwargs=dict(features_dim=32),
             ),
         )
-    if model_class in {ArDQN}:
+    if model_class in {ARDQN}:
         kwargs = dict(
             buffer_size=250,
             policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32), initial_aspiration=50.0),
@@ -57,7 +57,7 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
     # Test stochastic predict with channel last input
     if model_class == QRDQN:
         model.exploration_rate = 0.9
-    if model_class == ArDQN:
+    if model_class == ARDQN:
         model.policy.reset_aspiration()
 
     for _ in range(10):
@@ -173,7 +173,7 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
 
 
 # @pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, ArDQN])
-@pytest.mark.parametrize("model_class", [ArDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("normalize_images", [True, False])
 def test_image_like_input(model_class, normalize_images):
     """
