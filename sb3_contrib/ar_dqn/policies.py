@@ -172,8 +172,8 @@ class ArDQNPolicy(DQNPolicy):
             # We need to use nan_to_num here, just in case delta qmin and qmax are 0. The value 0.5 is arbitrarily
             #   chosen as in theory it shouldn't matter.
             lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1).nan_to_num(nan=0.5)
-            q = self.q_net_target(obs_t1)
-            self.aspiration = interpolate(q.min(dim=1).values, lambda_t1, q.max(dim=1).values).cpu().numpy()
+            qs = self.q_net_target(obs_t1)
+            self.aspiration = (self.aspiration - q) / self.gamma + interpolate(qs.min(dim=1).values, lambda_t1, qs.max(dim=1).values).cpu().numpy()
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
