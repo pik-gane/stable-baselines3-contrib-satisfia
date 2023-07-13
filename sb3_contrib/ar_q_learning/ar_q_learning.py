@@ -3,6 +3,7 @@ import time
 import warnings
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union
 
+import numpy as np
 import torch as th
 from gymnasium.vector.utils import spaces
 from stable_baselines3.common.base_class import BaseAlgorithm
@@ -52,6 +53,7 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
             policy,
             env,
             learning_rate,
+            gamma=gamma,
             policy_kwargs=policy_kwargs,
             stats_window_size=stats_window_size,
             tensorboard_log=tensorboard_log,
@@ -63,7 +65,6 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
             supported_action_spaces=(spaces.Discrete,),
         )
         self.mu = mu
-        self.gamma = gamma
         self.exploration_fraction = exploration_fraction
         self.exploration_initial_eps = exploration_initial_eps
         self.exploration_final_eps = exploration_final_eps
@@ -123,11 +124,15 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
             self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
             self.learning_rate = self.lr_schedule(self._current_progress_remaining)
             # Step
-            actions, aspiration_diff = self.predict(obs)
+            actions, _ = self.predict(obs)
             new_obs, rewards, dones, infos = self.env.step(actions)
             if self.verbose >= 2:
                 print(f"I receive reward {float(rewards):.2f} and arrive in state {int(new_obs)}\n")
-            self.rescale_aspiration(obs, actions, new_obs, aspiration_diff=aspiration_diff)
+            with th.no_grad():
+                aspiration_diff = self.policy.aspiration - np.take_along_axis(
+                    self.policy.q_values(obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                ).squeeze(1)
+            self.rescale_aspiration(obs, actions, new_obs)
             self.reset_aspiration(dones)
             new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(min=0, max=1)
             if self.verbose >= 2:

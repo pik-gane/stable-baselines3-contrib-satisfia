@@ -30,6 +30,7 @@ class ARAlgorithm(ABC):
         policy: Union[str, Type[ARQPolicy]],
         *args,
         policy_kwargs: Optional[Dict[str, Any]] = None,
+        gamma: float,
         **kwargs,
     ) -> None:
         # if type(policy) != str that means that the policy is being loaded from a saved model
@@ -42,7 +43,9 @@ class ARAlgorithm(ABC):
             if policy_kwargs is None:
                 policy_kwargs = {}
             policy_kwargs["initial_aspiration"] = 0.0
+        policy_kwargs["gamma"] = gamma
         super().__init__(policy, *args, policy_kwargs=policy_kwargs, **kwargs)  # pytype: disable=wrong-arg-count
+        self.gamma = gamma
 
     def predict(
         self,
@@ -50,7 +53,7 @@ class ARAlgorithm(ABC):
         state: Optional[Tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
         deterministic: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, None]:
         """
         Overrides the base_class predict function to include epsilon-greedy exploration.
 
@@ -62,7 +65,7 @@ class ARAlgorithm(ABC):
             (used in recurrent policies)
         """
         if self.verbose >= 2:
-            print(f"My Q values were: {list(self.policy.q_predictor(observation)[0].cpu().numpy())}")
+            print(f"My Q values were: {list(self.policy.q_values(observation).cpu().numpy())}")
         if not deterministic and np.random.rand() < self.exploration_rate:
             if self.policy.is_vectorized_observation(observation):
                 if isinstance(observation, dict):
@@ -72,27 +75,22 @@ class ARAlgorithm(ABC):
                 actions = np.array([self.action_space.sample() for _ in range(n_batch)])
             else:
                 actions = np.array(self.action_space.sample())
-            with th.no_grad():
-                aspiration_diff = self.policy.aspiration - np.take_along_axis(
-                    self.policy.q_values(observation).cpu().numpy(), np.expand_dims(actions, 1), 1
-                ).squeeze(1)
             if self.verbose >= 2:
                 print(f"I am exploring state {observation} and chose action {int(actions)}")
         else:
-            actions, aspiration_diff = self.policy.predict(observation, state, episode_start, deterministic)
+            actions, _ = self.policy.predict(observation, state, episode_start, deterministic)
             if self.verbose >= 2:
                 print(
                     f"My aspiration is {float(self.policy.aspiration):.2f} and my current state {observation}\n"
                     f"So I chose action {int(actions)}"
                 )
-        return actions, aspiration_diff
+        return actions, None
 
     def rescale_aspiration(
         self,
         obs_t: np.ndarray,
         a_t: np.ndarray,
         obs_t1: np.ndarray,
-        aspiration_diff: Optional[np.ndarray] = None,
         use_q_target: bool = True,
     ) -> None:
         """
@@ -102,10 +100,9 @@ class ARAlgorithm(ABC):
         :param obs_t: observations at time t
         :param a_t: actions at time t
         :param obs_t1: observations at time t+1
-        :param aspiration_diff: the difference between the current aspiration and the Q value
         :param use_q_target: whether to use the Q-value or the target Q-value
         """
-        self.policy.rescale_aspiration(obs_t, a_t, obs_t1, aspiration_diff, use_q_target)
+        self.policy.rescale_aspiration(obs_t, a_t, obs_t1, use_q_target)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """

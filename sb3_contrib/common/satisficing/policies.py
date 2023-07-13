@@ -17,6 +17,8 @@ class ARQPolicy(BasePolicy):
         observation_space: spaces.Space,
         action_space: spaces.Discrete,
         initial_aspiration: float,
+        *,
+        gamma,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -30,6 +32,7 @@ class ARQPolicy(BasePolicy):
         self.delta_qmax_predictor = None
         self.initial_aspiration = initial_aspiration
         self.aspiration: Union[float, np.ndarray] = initial_aspiration
+        self.gamma = gamma
 
     def _create_aliases(
         self,
@@ -43,11 +46,10 @@ class ARQPolicy(BasePolicy):
         self.delta_qmin_predictor = delta_qmin_predictor
         self.delta_qmax_predictor = delta_qmax_predictor
 
-    def _predict(self, obs: th.Tensor, deterministic: bool = True) -> Tuple[th.Tensor, th.Tensor]:
+    def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values_batch = self.q_predictor(obs)
         actions = th.zeros(len(obs), dtype=th.int)
         aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
-        aspiration_diffs = th.zeros(len(obs), dtype=th.float, device=self.device)
         # todo?: using a for loop may be crappy, if it's too slow, we could rewrite this using pytorch
         for i in range(len(obs)):
             q_values: th.Tensor = q_values_batch[i]
@@ -69,11 +71,9 @@ class ARQPolicy(BasePolicy):
                 if not higher.any():
                     # if all values are lower than aspiration, return the highest value
                     actions[i] = q_values.argmax()
-                    aspiration_diffs[i] = aspiration - q_values[actions[i]]
                 elif not lower.any():
                     # if all values are higher than aspiration, return the lowest value
                     actions[i] = q_values.argmin()
-                    aspiration_diffs[i] = aspiration - q_values[actions[i]]
                 else:
                     q_values_for_max = q_values.clone()
                     q_values_for_max[lower] = th.inf
@@ -87,34 +87,14 @@ class ARQPolicy(BasePolicy):
                         actions[i] = a_plus
                     else:
                         actions[i] = a_minus
-        return actions, aspiration_diffs
-
-    def predict(
-        self,
-        observation: Union[np.ndarray, Dict[str, np.ndarray]],
-        _state: Optional[Tuple[np.ndarray, ...]] = None,
-        _episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        observation, vectorized_env = self.obs_to_tensor(observation)
-        with th.no_grad():
-            actions, aspiration_diff = self._predict(observation, deterministic=deterministic)
-        # Convert to numpy, and reshape to the original action shape
-        actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))
-        aspiration_diff = aspiration_diff.cpu().numpy()
-
-        # Remove batch dimension if needed
-        if not vectorized_env:
-            actions = actions.squeeze(axis=0)
-
-        return actions, aspiration_diff
+        return actions
 
     def rescale_aspiration(
         self,
         obs: np.ndarray,
         actions: np.ndarray,
         next_obs: np.ndarray,
-        aspiration_diffs: Optional[np.ndarray] = None,
+
         use_q_target: bool = True,
     ) -> None:
         """
@@ -124,8 +104,6 @@ class ARQPolicy(BasePolicy):
         :param obs: observation at time t
         :param actions: action at time t
         :param next_obs: observation at time t+1
-        :param aspiration_diffs: difference between the aspiration and the
-            Q-value of the action taken at time t
         :param use_q_target: whether to use the Q-value or the target Q-value
         """
         obs, next_obs = self.obs_to_tensor(obs)[0], self.obs_to_tensor(next_obs)[0]
@@ -138,9 +116,8 @@ class ARQPolicy(BasePolicy):
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
             lambda_t1[(q_max == q_min).squeeze(dim=1)] = 0.5
             next_q = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
-            self.aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
-            if aspiration_diffs is not None:
-                self.aspiration += aspiration_diffs
+            next_aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
+            self.aspiration = next_aspiration + (self.aspiration - q.cpu().numpy()) * self.gamma
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """

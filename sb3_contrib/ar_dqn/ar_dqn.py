@@ -47,7 +47,7 @@ class ARDQN(ARAlgorithm, DQN):
     :param mu: the aspiration smoothing coefficient (between 0 and 1) default 0 for no smoothing for lambda
     :param tau: the soft update coefficient ("Polyak update", between 0 and 1) default 1 for hard update
     :param gamma: the discount factor
-    :param loss:
+    :param loss: The loss function to use (MSELoss or SmoothL1Loss)
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -96,7 +96,7 @@ class ARDQN(ARAlgorithm, DQN):
         buffer_size: int = 1_000_000,  # 1e6
         learning_starts: int = 1000,
         batch_size: int = 32,
-        mu: float = 0.0,
+        mu: float = 0.5,
         tau: float = 1.0,
         gamma: float = 0.99,
         loss: Literal["MSE", "SmoothL1Loss"] = "MSE",
@@ -117,6 +117,7 @@ class ARDQN(ARAlgorithm, DQN):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ) -> None:
+        # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
         super().__init__(
             policy,
             env,
@@ -125,9 +126,9 @@ class ARDQN(ARAlgorithm, DQN):
             learning_starts,
             batch_size,
             tau,
-            gamma,
             train_freq,
             gradient_steps,
+            gamma=gamma,
             replay_buffer_class=SatisficingReplayBuffer,  # We need dict because we want to store lambdas
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
@@ -255,14 +256,19 @@ class ARDQN(ARAlgorithm, DQN):
             if self.num_timesteps < learning_starts:
                 self.exploration_rate = 1.0
             # Select action randomly or according to policy
-            actions, aspiration_diff = self.predict(self._last_obs)
+            actions, _ = self.predict(self._last_obs)
 
             # Perform action
             new_obs, rewards, dones, infos = env.step(actions)
             # Rescale aspiration
             with th.no_grad():
                 # will update self.policy.aspiration
-                self.rescale_aspiration(self._last_obs, actions, new_obs, aspiration_diff)
+                aspiration_diff = aspiration_diff = self.policy.aspiration - np.take_along_axis(
+                    self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                ).squeeze(1)
+                # self.rescale_aspiration(self._last_obs, actions, new_obs, aspiration_diff)
+                self.policy.aspiration -= rewards  # todo /!\
+                self.policy.aspiration /= self.gamma
                 self.reset_aspiration(dones)
                 new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(0, 1).cpu().numpy()
                 self._log_policy(new_obs, new_lambda, aspiration_diff)
@@ -419,18 +425,3 @@ class ARDQN(ARAlgorithm, DQN):
         super().set_env(env, True)
         # Update the aspiration shape according to the env
         self.policy.reset_aspiration()
-
-    def predict(
-        self,
-        observation: Union[np.ndarray, Dict[str, np.ndarray]],
-        state: Optional[Tuple[np.ndarray, ...]] = None,
-        episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        To make a prediction using the AR DQN, set deterministic=False and exploration_rate=0.
-        The version with deterministic=True is exposed only for testing purposes
-        """
-        return ARAlgorithm.predict(self, observation, state, episode_start, deterministic)
-
-
