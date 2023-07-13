@@ -182,7 +182,7 @@ class ArDQN(DQN):
                 v = interpolate(v_min, smooth_lambda, v_max)
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * v
                 target_delta_min = self.gamma * (v - v_min)
-                target_delta_max = self.gamma * (v_max - v_min)
+                target_delta_max = self.gamma * (v_max - v)
 
             obs = replay_data.observations
             # Get current Q-values estimates
