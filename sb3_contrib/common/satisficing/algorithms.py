@@ -12,13 +12,12 @@ from sb3_contrib.common.satisficing.policies import ARQPolicy
 from sb3_contrib.common.satisficing.utils import interpolate
 
 
-class ARAlgorithm(ABC):
+class ARQAlgorithm(ABC):
     """
     Abstract class for aspiration rescaling algorithms.
     """
 
     policy: ARQPolicy
-    gamma: float
     verbose: int
     device: Union[th.device, str]
     action_space: spaces.Discrete
@@ -27,25 +26,26 @@ class ARAlgorithm(ABC):
 
     def __init__(
         self,
-        policy: Union[str, Type[ARQPolicy]],
+        initial_aspiration: float,
         *args,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         gamma: float,
+        rho: float,
         **kwargs,
     ) -> None:
         # if type(policy) != str that means that the policy is being loaded from a saved model
-        if not ((type(policy) != str) or (policy_kwargs is not None and "initial_aspiration" in policy_kwargs.keys())):
-            warnings.warn(
-                "Aspiration rescaling algorithms requires a value for initial_aspiration in policy_kwargs\n"
-                "If this is not a test, consider setting this parameter",
-                UserWarning,
-            )
-            if policy_kwargs is None:
-                policy_kwargs = {}
-            policy_kwargs["initial_aspiration"] = 0.0
+        if policy_kwargs is None:
+            policy_kwargs = {}
+        for kwarg in ["initial_aspiration", "gamma", "rho"]:
+            if kwarg in policy_kwargs:
+                warnings.warn(
+                    f"{kwarg} was passed to the policy kwargs, but it will be overwritten by the algorithm kwargs",
+                    UserWarning,
+                )
+        policy_kwargs["initial_aspiration"] = initial_aspiration
         policy_kwargs["gamma"] = gamma
-        super().__init__(policy, *args, policy_kwargs=policy_kwargs, **kwargs)  # pytype: disable=wrong-arg-count
-        self.gamma = gamma
+        policy_kwargs["rho"] = rho
+        super().__init__(*args, policy_kwargs=policy_kwargs, **kwargs)  # pytype: disable=wrong-arg-count
 
     def predict(
         self,
@@ -88,21 +88,23 @@ class ARAlgorithm(ABC):
 
     def rescale_aspiration(
         self,
-        obs_t: np.ndarray,
-        a_t: np.ndarray,
-        obs_t1: np.ndarray,
+        obs: np.ndarray,
+        actions: np.ndarray,
+        rewards: np.ndarray,
+        next_obs: np.ndarray,
         use_q_target: bool = True,
     ) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
         get the target aspiration.
 
-        :param obs_t: observations at time t
-        :param a_t: actions at time t
-        :param obs_t1: observations at time t+1
+        :param obs: observations at time t
+        :param actions: actions at time t
+        :param rewards: rewards at time t
+        :param next_obs: observations at time t+1
         :param use_q_target: whether to use the Q-value or the target Q-value
         """
-        self.policy.rescale_aspiration(obs_t, a_t, obs_t1, use_q_target)
+        self.policy.rescale_aspiration(obs, actions, rewards, next_obs, use_q_target=use_q_target)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
@@ -145,9 +147,9 @@ class ARAlgorithm(ABC):
             v_min = next_q_values.min(dim=1).values.unsqueeze(1)
             v_max = next_q_values.max(dim=1).values.unsqueeze(1)
             v = interpolate(v_min, smooth_lambda, v_max)
-            q_target = rewards + self.gamma * dones.logical_not() * v
-            delta_qmin_target = self.gamma * (v - v_min) * dones.logical_not()
-            delta_qmax_target = self.gamma * (v_max - v) * dones.logical_not()
+            q_target = rewards + self.policy.gamma * dones.logical_not() * v
+            delta_qmin_target = self.policy.gamma * (v - v_min) * dones.logical_not()
+            delta_qmax_target = self.policy.gamma * (v_max - v) * dones.logical_not()
             return q_target, delta_qmin_target, delta_qmax_target
 
     def _learning_step(

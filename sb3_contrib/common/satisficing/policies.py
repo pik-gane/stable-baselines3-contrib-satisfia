@@ -19,6 +19,7 @@ class ARQPolicy(BasePolicy):
         initial_aspiration: float,
         *,
         gamma,
+        rho,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -33,6 +34,7 @@ class ARQPolicy(BasePolicy):
         self.initial_aspiration = initial_aspiration
         self.aspiration: Union[float, np.ndarray] = initial_aspiration
         self.gamma = gamma
+        self.rho = rho
 
     def _create_aliases(
         self,
@@ -93,17 +95,18 @@ class ARQPolicy(BasePolicy):
         self,
         obs: np.ndarray,
         actions: np.ndarray,
+        rewards: np.ndarray,
         next_obs: np.ndarray,
-
         use_q_target: bool = True,
     ) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
         get the target aspiration as its return-to-go.
 
-        :param obs: observation at time t
-        :param actions: action at time t
-        :param next_obs: observation at time t+1
+        :param obs: observations at time t
+        :param actions: actions at time t
+        :param rewards: rewards at time t
+        :param next_obs: observations at time t+1
         :param use_q_target: whether to use the Q-value or the target Q-value
         """
         obs, next_obs = self.obs_to_tensor(obs)[0], self.obs_to_tensor(next_obs)[0]
@@ -112,12 +115,14 @@ class ARQPolicy(BasePolicy):
             q = th.gather(self.q_predictor(obs), dim=1, index=actions)
             q_min: th.Tensor = q - th.gather(self.delta_qmin_predictor(obs), 1, actions)
             q_max = q + th.gather(self.delta_qmax_predictor(obs), 1, actions)
-            lambda_t1 = ratio(q_min, q, q_max).squeeze(dim=1)
+            next_lambda = ratio(q_min, q, q_max).squeeze(dim=1)
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
-            lambda_t1[(q_max == q_min).squeeze(dim=1)] = 0.5
+            next_lambda[(q_max == q_min).squeeze(dim=1)] = 0.5
             next_q = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
-            next_aspiration = interpolate(next_q.min(dim=1).values, lambda_t1, next_q.max(dim=1).values).cpu().numpy()
-            self.aspiration = next_aspiration + (self.aspiration - q.cpu().numpy()) * self.gamma
+            next_aspiration = interpolate(next_q.min(dim=1).values, next_lambda, next_q.max(dim=1).values).cpu().numpy()
+            delta_hard = -rewards / self.gamma
+            delta_soft = next_aspiration - q.cpu().numpy()
+            self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
@@ -139,11 +144,12 @@ class ARQPolicy(BasePolicy):
         )
         return data
 
-    def q_values(self, obs: np.ndarray) -> th.Tensor:
-        return self.q_predictor(self.obs_to_tensor(obs)[0])
-
-    def action_value(self, obs: np.ndarray, action: np.ndarray):
-        return self.q_predictor(obs).gather(1, th.tensor(action, device=self.device, dtype=th.long).unsqueeze(1)).squeeze(1)
+    def q_values(self, obs: np.ndarray, actions: Optional[np.ndarray] = None) -> th.Tensor:
+        if actions is None:
+            return self.q_predictor(self.obs_to_tensor(obs)[0])
+        else:
+            t_actions = th.as_tensor(actions, device=self.device, dtype=th.long).unsqueeze(dim=1)
+            return self.q_predictor(self.obs_to_tensor(obs)[0]).gather(1, t_actions).squeeze(dim=1)
 
     def lambda_ratio(self, obs: np.ndarray, aspiration: Union[float, np.ndarray]) -> th.Tensor:
         q = self.q_values(obs)

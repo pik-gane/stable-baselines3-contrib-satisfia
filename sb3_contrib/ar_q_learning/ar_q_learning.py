@@ -11,13 +11,13 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import get_linear_fn, safe_mean
 
 from sb3_contrib.ar_q_learning.policies import ARQLearningPolicy, DeltaQTable, QTable
-from sb3_contrib.common.satisficing.algorithms import ARAlgorithm
+from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
 from sb3_contrib.common.satisficing.utils import interpolate, ratio
 
 SelfARQLearning = TypeVar("SelfARQLearning", bound="ARQLearning")
 
 
-class ARQLearning(ARAlgorithm, BaseAlgorithm):
+class ARQLearning(ARQAlgorithm, BaseAlgorithm):
     """
     Tabular Q-Learning with Aspiration Rescaling
     """
@@ -34,10 +34,12 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
     def __init__(
         self,
         env: Union[GymEnv, str, None],
+        initial_aspiration: float,
         policy: Union[str, Type[ARQLearningPolicy]] = "ARQLearningPolicy",
         learning_rate: Union[float, Schedule] = 0.1,
         mu: float = 0.5,
         gamma: float = 0.99,
+        rho: float = 0.5,
         exploration_fraction: float = 0.1,
         exploration_initial_eps: float = 1.0,
         exploration_final_eps: float = 0.05,
@@ -50,10 +52,12 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
         _init_setup_model: bool = True,
     ) -> None:
         super().__init__(
+            initial_aspiration,
             policy,
             env,
             learning_rate,
             gamma=gamma,
+            rho=rho,
             policy_kwargs=policy_kwargs,
             stats_window_size=stats_window_size,
             tensorboard_log=tensorboard_log,
@@ -129,10 +133,8 @@ class ARQLearning(ARAlgorithm, BaseAlgorithm):
             if self.verbose >= 2:
                 print(f"I receive reward {float(rewards):.2f} and arrive in state {int(new_obs)}\n")
             with th.no_grad():
-                aspiration_diff = self.policy.aspiration - np.take_along_axis(
-                    self.policy.q_values(obs).cpu().numpy(), np.expand_dims(actions, 1), 1
-                ).squeeze(1)
-            self.rescale_aspiration(obs, actions, new_obs)
+                aspiration_diff = self.policy.aspiration - self.policy.q_values(obs, actions).cpu().numpy()
+            self.rescale_aspiration(obs, actions, rewards, new_obs)
             self.reset_aspiration(dones)
             new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(min=0, max=1)
             if self.verbose >= 2:

@@ -108,9 +108,7 @@ def evaluate_policy(
             deterministic=deterministic,
         )
         new_observations, rewards, dones, infos = env.step(actions)
-        model.rescale_aspiration(
-            observations, actions, new_observations, use_q_target=False
-        )
+        model.rescale_aspiration(observations, actions, rewards, new_observations, use_q_target=False)
         # logs
         new_aspiration = deepcopy(model.policy.aspiration).squeeze(1)
         with th.no_grad():

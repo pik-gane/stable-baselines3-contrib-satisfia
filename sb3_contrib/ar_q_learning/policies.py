@@ -41,12 +41,14 @@ class ARQLearningPolicy(ARQPolicy):
         action_space: spaces.Discrete,
         initial_aspiration: float,
         gamma: float,
+        rho: float = 0.5,
     ) -> None:
         super().__init__(
             observation_space,
             action_space,
             initial_aspiration,
             gamma=gamma,
+            rho=rho,
         )
         self._create_aliases()
 

@@ -2,7 +2,7 @@ import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
-from sb3_contrib.common.satisficing.algorithms import ARAlgorithm
+from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
 
 try:
     from typing import Literal
@@ -29,7 +29,7 @@ from sb3_contrib.common.satisficing.utils import interpolate, ratio
 SelfArDQN = TypeVar("SelfArDQN", bound="ArDQN")
 
 
-class ARDQN(ARAlgorithm, DQN):
+class ARDQN(ARQAlgorithm, DQN):
     """
     Deep Q-Network (DQN) with aspiration rescaling (AR)
 
@@ -92,6 +92,7 @@ class ARDQN(ARAlgorithm, DQN):
         self,
         policy: Union[str, Type[ArDQNPolicy]],
         env: Union[GymEnv, str],
+        initial_aspiration: float = None,
         learning_rate: Union[float, Schedule] = 1e-4,
         buffer_size: int = 1_000_000,  # 1e6
         learning_starts: int = 1000,
@@ -99,6 +100,7 @@ class ARDQN(ARAlgorithm, DQN):
         mu: float = 0.5,
         tau: float = 1.0,
         gamma: float = 0.99,
+        rho: float = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "MSE",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
@@ -117,8 +119,11 @@ class ARDQN(ARAlgorithm, DQN):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ) -> None:
+        if initial_aspiration is None and isinstance(policy, str):
+            raise ValueError("You must specify an initial aspiration for AR DQN")
         # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
         super().__init__(
+            initial_aspiration,
             policy,
             env,
             learning_rate,
@@ -129,7 +134,8 @@ class ARDQN(ARAlgorithm, DQN):
             train_freq,
             gradient_steps,
             gamma=gamma,
-            replay_buffer_class=SatisficingReplayBuffer,  # We need dict because we want to store lambdas
+            rho=rho,
+            replay_buffer_class=SatisficingReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
             target_update_interval=target_update_interval,
@@ -266,9 +272,12 @@ class ARDQN(ARAlgorithm, DQN):
                 aspiration_diff = aspiration_diff = self.policy.aspiration - np.take_along_axis(
                     self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
                 ).squeeze(1)
-                # self.rescale_aspiration(self._last_obs, actions, new_obs, aspiration_diff)
-                self.policy.aspiration -= rewards  # todo /!\
-                self.policy.aspiration /= self.gamma
+                self.rescale_aspiration(
+                    self._last_obs,
+                    actions,
+                    rewards,
+                    new_obs,
+                )
                 self.reset_aspiration(dones)
                 new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(0, 1).cpu().numpy()
                 self._log_policy(new_obs, new_lambda, aspiration_diff)

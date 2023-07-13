@@ -172,8 +172,8 @@ def test_multi_env_ardqn(env_id):
     model.switch_to_eval()
     for i in range(100):
         a = model.predict(last_obs)[0]
-        obs, _, done, _ = env.step(a)
+        obs, r, done, _ = env.step(a)
         if done.any():
             break
-        model.rescale_aspiration(last_obs, a, obs)
+        model.rescale_aspiration(last_obs, a, r, obs)
         last_obs = obs
