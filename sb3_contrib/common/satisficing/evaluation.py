@@ -13,15 +13,14 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is
 from tqdm import tqdm
 
 from sb3_contrib.ar_dqn import ARDQN
-from sb3_contrib.common.satisficing.algorithms import ARAlgorithm
+from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
 
 
 def evaluate_policy(
-    model: ARAlgorithm,
+    model: ARQAlgorithm,
     env: Union[gym.Env, VecEnv],
     n_eval_episodes: int = 10,
     deterministic: bool = False,
-    use_diff: bool = True,
     render: bool = False,
     callback: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None,
     reward_threshold: Optional[float] = None,
@@ -163,18 +162,18 @@ def evaluate_policy(
                         ]
                     current_aspirations[i] = [model.policy.initial_aspiration]
                     current_rew_left[i] = [model.policy.initial_aspiration]
-
         observations = new_observations
-
         if render:
             env.render()
 
     mean_reward = np.mean(episode_rewards)
     std_reward = np.std(episode_rewards)
+    mask = np.array([[i >= len(r) for i in range(max(map(len, reward_left)))] for r in reward_left])
+    expand = lambda l: np.array([[x[i] if i < len(x) else x[-1] for i in range(max(map(len, l)))] for x in l])
     infos = {
-        "lambda": np.array(lambdas).mean(axis=0),
-        "aspiration": np.array(aspirations).mean(axis=0),
-        "reward left": np.array(reward_left).mean(axis=0),
+        "lambda": np.ma.array(expand(lambdas), mask=mask[:, :-1]).mean(axis=0),
+        "aspiration": np.ma.array(expand(aspirations), mask=mask[:, :-1]).mean(axis=0),
+        "reward left": np.ma.array(expand(reward_left), mask=mask).mean(axis=0),
     }
     if reward_threshold is not None:
         assert mean_reward > reward_threshold, "Mean reward below threshold: " f"{mean_reward:.2f} < {reward_threshold:.2f}"
@@ -435,7 +434,7 @@ def plot_ar_mu(env, models, n_eval_episodes: int = 500) -> Figure:
 
 
 def evaluate_hard_policy(
-    model: ARAlgorithm,
+    model: ARQAlgorithm,
     env: Union[gym.Env, VecEnv],
     n_eval_episodes: int = 10,
     deterministic: bool = False,
