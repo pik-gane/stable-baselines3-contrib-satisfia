@@ -9,7 +9,7 @@ from stable_baselines3.common.envs import SimpleMultiObsEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecNormalize
 
-from sb3_contrib import QRDQN, TQC, TRPO, ARDQN
+from sb3_contrib import ARDQN, QRDQN, TQC, TRPO
 
 
 class DummyDictEnv(gym.Env):
@@ -124,6 +124,8 @@ def test_consistency(model_class):
         )
         if model_class in {QRDQN, ARDQN}:
             kwargs["learning_starts"] = 0
+        if model_class in {ARDQN}:
+            kwargs["initial_aspiration"] = 0.0
 
     dict_model = model_class("MultiInputPolicy", dict_env, gamma=0.5, seed=1, **kwargs)
     action_before_learning_1, _ = dict_model.predict(obs, deterministic=True)

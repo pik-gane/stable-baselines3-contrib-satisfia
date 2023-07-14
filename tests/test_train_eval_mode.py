@@ -9,7 +9,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.preprocessing import get_flattened_obs_dim
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from sb3_contrib import QRDQN, TQC, ARDQN, MaskablePPO
+from sb3_contrib import ARDQN, QRDQN, TQC, MaskablePPO
 from sb3_contrib.common.envs import InvalidActionEnvDiscrete
 from sb3_contrib.common.maskable.utils import get_action_masks
 
@@ -240,6 +240,9 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
     clone_helper = CLONE_HELPERS[model_class]
     policy_kwargs = dict(net_arch=[16, 16], features_extractor_class=FlattenBatchNormDropoutExtractor)
     learning_starts = 10
+    kwargs = {}
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
     model = model_class(
         "MlpPolicy",
         env_id,
@@ -248,6 +251,7 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
         seed=1,
         gradient_steps=0,
         train_freq=1,
+        **kwargs,
     )
 
     batch_norm_stats_before = clone_helper(model)
@@ -306,9 +310,8 @@ def test_ardqn_predict_with_dropout_batch_norm(env_id):
     policy_kwargs = dict(
         features_extractor_class=FlattenBatchNormDropoutExtractor,
         net_arch=[16, 16],
-        initial_aspiration=50.0,
     )
-    model = ARDQN("MlpPolicy", env_id, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
+    model = ARDQN("MlpPolicy", env_id, initial_aspiration=10.0, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
 
     batch_norm_stats_before = clone_helper(model)
 

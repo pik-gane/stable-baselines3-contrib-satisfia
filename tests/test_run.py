@@ -3,7 +3,7 @@ import pytest
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib import ARS, QRDQN, TQC, TRPO, ARDQN, MaskablePPO
+from sb3_contrib import ARDQN, ARS, QRDQN, TQC, TRPO, MaskablePPO
 from sb3_contrib.common.envs import InvalidActionEnvDiscrete
 from sb3_contrib.common.vec_env import AsyncEval
 
@@ -164,7 +164,7 @@ def test_ep_buffers_stats_window_size(algo, stats_window_size):
 @pytest.mark.parametrize("env_id", ["CartPole-v1"])
 def test_multi_env_ardqn(env_id):
     env = make_vec_env(env_id, n_envs=10)
-    model = ARDQN("MlpPolicy", env, learning_starts=0)
+    model = ARDQN("MlpPolicy", env, learning_starts=0, initial_aspiration=0.)
     model.learn(
         total_timesteps=100,
     )

@@ -4,7 +4,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib import ARS, QRDQN, TQC, ARDQN, RecurrentPPO
+from sb3_contrib import ARDQN, ARS, QRDQN, TQC, RecurrentPPO
 from sb3_contrib.common.vec_env import AsyncEval
 
 N_STEPS_TRAINING = 500
@@ -43,6 +43,8 @@ def test_deterministic_training_common(algo):
         elif algo == RecurrentPPO:
             kwargs.update({"policy_kwargs": dict(net_arch=[], enable_critic_lstm=True, lstm_hidden_size=8)})
             kwargs.update({"n_steps": 50, "n_epochs": 4})
+        if algo in {ARDQN}:
+            kwargs["initial_aspiration"] = 0.0
     policy_str = "MlpLstmPolicy" if algo == RecurrentPPO else "MlpPolicy"
     for i in range(2):
         model = algo(policy_str, env_id, seed=SEED, **kwargs)
