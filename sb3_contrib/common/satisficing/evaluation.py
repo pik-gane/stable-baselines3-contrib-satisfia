@@ -192,7 +192,7 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
         subplot_titles=(
             "Mean Lambda for each step",
             "Mean Aspiration Value for each step",
-            "Remaining reward",
+            "Mean Remaining return to go for each step",
             "Mean Reward over 500 episodes",
         ),
     )
@@ -303,7 +303,7 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
     fig.update_xaxes(title_text="Environment steps", row=1, col=1)
     fig.update_yaxes(title_text="Aspiration", row=2, col=1)
     fig.update_xaxes(title_text="Environment steps", row=2, col=1)
-    fig.update_yaxes(title_text="Remaining reward", row=3, col=1)
+    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
     fig.update_xaxes(title_text="Environment steps", row=3, col=1)
 
     fig.show(renderer="browser")
@@ -426,10 +426,9 @@ def plot_ar_mu(env, models, n_eval_episodes: int = 500) -> Figure:
     fig.update_xaxes(title_text="Environment steps", row=1, col=1)
     fig.update_yaxes(title_text="Aspiration", row=2, col=1)
     fig.update_xaxes(title_text="Environment steps", row=2, col=1)
-    fig.update_yaxes(title_text="Remaining reward", row=3, col=1)
+    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
     fig.update_xaxes(title_text="Environment steps", row=3, col=1)
 
-    fig.show(renderer="browser")
     return fig
 
 
