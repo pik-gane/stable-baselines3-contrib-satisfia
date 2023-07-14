@@ -46,4 +46,6 @@ src
 *.lprof
 *.prof
 
+logs/
+
 MUJOCO_LOG.TXT
