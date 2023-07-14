@@ -123,7 +123,7 @@ class ARQPolicy(BasePolicy):
             next_q = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
             next_aspiration = interpolate(next_q.min(dim=1).values, next_lambda, next_q.max(dim=1).values).cpu().numpy()
             delta_hard = -rewards / self.gamma
-            delta_soft = next_aspiration - q.cpu().numpy()
+            delta_soft = next_aspiration - q.cpu().numpy() / self.gamma
             self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:

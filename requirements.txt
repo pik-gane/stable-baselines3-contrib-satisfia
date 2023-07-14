@@ -1,3 +1,4 @@
+# python >= 3.10.0
 gymnasium
 numpy
 torch
@@ -11,3 +12,4 @@ matplotlib
 tqdm
 ray
 plotly
+pycolab
