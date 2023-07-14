@@ -34,7 +34,7 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
     def __init__(
         self,
         env: Union[GymEnv, str, None],
-        initial_aspiration: float,
+        initial_aspiration: float = None,
         policy: Union[str, Type[ARQLearningPolicy]] = "ARQLearningPolicy",
         learning_rate: Union[float, Schedule] = 0.1,
         mu: float = 0.5,
@@ -51,6 +51,8 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
         seed: Optional[int] = None,
         _init_setup_model: bool = True,
     ) -> None:
+        if initial_aspiration is None and isinstance(policy, str):
+            raise ValueError("You must specify an initial aspiration for ARQLearning")
         super().__init__(
             initial_aspiration,
             policy,

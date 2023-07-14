@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch as th
@@ -94,44 +94,45 @@ class ArDQNPolicy(ARQPolicy):
         :param lr_schedule: Learning rate schedule
             lr_schedule(1) is the initial learning rate
         """
-        self.delta_qmax_net = self.make_q_net()
-        self.delta_qmin_net = self.make_q_net()
-        # Add a ReLU to the last layer of delta_qmax_net and delta_qmin_net because we want to have positive values
-        self.delta_qmax_net.q_net = nn.Sequential(self.delta_qmax_net.q_net, nn.ReLU())
-        self.delta_qmin_net.q_net = nn.Sequential(self.delta_qmin_net.q_net, nn.ReLU())
-        # Super methode will create the optimizer, q_net and q_net_target and set q_net_target to eval mode
-        self.q_net = self.make_q_net()
-        self.q_net_target = self.make_q_net()
-        self.q_net_target.load_state_dict(self.q_net.state_dict())
-        self.q_net_target.set_training_mode(False)
-
+        self.q_net, self.q_net_target = self.make_q_nets()
+        self.delta_qmin_net, self.delta_qmin_net_target = self.make_delta_q_nets()
+        self.delta_qmax_net, self.delta_qmax_net_target = self.make_delta_q_nets()
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(  # type: ignore[call-arg]
             self.parameters(),
             lr=lr_schedule(1),
             **self.optimizer_kwargs,
         )
-        super()._create_aliases(self.q_net, self.q_net_target, self.delta_qmin_net, self.delta_qmax_net)
+        super()._create_aliases(
+            self.q_net,
+            self.q_net_target,
+            self.delta_qmin_net,
+            self.delta_qmin_net_target,
+            self.delta_qmax_net,
+            self.delta_qmax_net_target,
+        )
 
     def make_q_net(self) -> QNetwork:
         # Make sure we always have separate networks for features extractors etc
         net_args = self._update_features_extractor(self.net_args, features_extractor=None)
         return QNetwork(**net_args).to(self.device)
 
-    # def make_q_nets(self, net_args) -> (QNetwork, QNetwork):
-    #     # todo: remove if no target are needed for qmin and qmax
-    #     """
-    #     Create the network and the target network.
-    #     The target network is a copy of the network with the initial weights and it's not on training mode.
-    #
-    #     :return: A pair containing the network and the target network
-    #     """
-    #     # Make sure we always have separate networks for features extractors etc
-    #     net = QNetwork(**net_args).to(self.device)
-    #     target_net = QNetwork(**net_args).to(self.device)
-    #     target_net.load_state_dict(net.state_dict())
-    #     target_net.set_training_mode(False)
-    #     return net, target_net
+    def make_q_nets(self) -> Tuple[QNetwork, QNetwork]:
+        # Make sure we always have separate networks for features extractors etc
+        q_net = self.make_q_net()
+        q_net_target = self.make_q_net()
+        q_net_target.load_state_dict(q_net.state_dict())
+        q_net_target.set_training_mode(False)
+        return q_net, q_net_target
+
+    def make_delta_q_nets(self) -> Tuple[QNetwork, QNetwork]:
+        delta_q_net = self.make_q_net()
+        delta_q_net.q_net = nn.Sequential(delta_q_net.q_net, nn.ReLU())
+        delta_q_net_target = self.make_q_net()
+        delta_q_net_target.q_net = nn.Sequential(delta_q_net_target.q_net, nn.ReLU())
+        delta_q_net_target.load_state_dict(delta_q_net.state_dict())
+        delta_q_net_target.set_training_mode(False)
+        return delta_q_net, delta_q_net_target
 
     def set_training_mode(self, mode: bool) -> None:
         """
@@ -189,8 +190,10 @@ class CnnPolicy(ArDQNPolicy):
         observation_space: spaces.Space,
         action_space: spaces.Discrete,
         lr_schedule: Schedule,
-        *,
         initial_aspiration: float,
+        gamma: float,
+        rho: float,
+        *,
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
         features_extractor_class: Type[BaseFeaturesExtractor] = NatureCNN,
@@ -204,6 +207,8 @@ class CnnPolicy(ArDQNPolicy):
             action_space,
             lr_schedule,
             initial_aspiration,
+            gamma,
+            rho,
             net_arch,
             activation_fn,
             features_extractor_class,
@@ -238,6 +243,8 @@ class MultiInputPolicy(ArDQNPolicy):
         action_space: spaces.Discrete,
         lr_schedule: Schedule,
         initial_aspiration: float,
+        gamma: float,
+        rho: float,
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
         features_extractor_class: Type[BaseFeaturesExtractor] = CombinedExtractor,
@@ -251,6 +258,8 @@ class MultiInputPolicy(ArDQNPolicy):
             action_space,
             lr_schedule,
             initial_aspiration,
+            gamma,
+            rho,
             net_arch,
             activation_fn,
             features_extractor_class,

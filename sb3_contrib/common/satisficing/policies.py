@@ -27,10 +27,6 @@ class ARQPolicy(BasePolicy):
             action_space,
             **kwargs,
         )
-        self.q_predictor = None
-        self.q_target_predictor = None
-        self.delta_qmin_predictor = None
-        self.delta_qmax_predictor = None
         self.initial_aspiration = initial_aspiration
         self.aspiration: Union[float, np.ndarray] = initial_aspiration
         self.gamma = gamma
@@ -41,12 +37,16 @@ class ARQPolicy(BasePolicy):
         q_predictor: BaseModel,
         q_target_predictor: BaseModel,
         delta_qmin_predictor: BaseModel,
+        delta_qmin_target_predictor: BaseModel,
         delta_qmax_predictor: BaseModel,
+        delta_qmax_target_predictor: BaseModel,
     ) -> None:
         self.q_predictor = q_predictor
         self.q_target_predictor = q_target_predictor
         self.delta_qmin_predictor = delta_qmin_predictor
+        self.delta_qmin_target_predictor = delta_qmin_target_predictor
         self.delta_qmax_predictor = delta_qmax_predictor
+        self.delta_qmax_target_predictor = delta_qmax_target_predictor
 
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values_batch = self.q_predictor(obs)
@@ -113,8 +113,10 @@ class ARQPolicy(BasePolicy):
         with th.no_grad():
             actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
             q = th.gather(self.q_predictor(obs), dim=1, index=actions)
-            q_min: th.Tensor = q - th.gather(self.delta_qmin_predictor(obs), 1, actions)
-            q_max = q + th.gather(self.delta_qmax_predictor(obs), 1, actions)
+            qmin_predictor = self.delta_qmin_target_predictor if use_q_target else self.delta_qmin_predictor
+            qmax_predictor = self.delta_qmax_target_predictor if use_q_target else self.delta_qmax_predictor
+            q_min: th.Tensor = q - th.gather(qmin_predictor(obs), 1, actions)
+            q_max = q + th.gather(qmax_predictor(obs), 1, actions)
             next_lambda = ratio(q_min, q, q_max).squeeze(dim=1)
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
             next_lambda[(q_max == q_min).squeeze(dim=1)] = 0.5
@@ -140,6 +142,8 @@ class ARQPolicy(BasePolicy):
         data.update(
             dict(
                 initial_aspiration=self.initial_aspiration,
+                rho=self.rho,
+                gamma=self.gamma,
             )
         )
         return data

@@ -16,7 +16,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import should_collect_more_steps
+from stable_baselines3.common.utils import get_parameters_by_name, polyak_update, should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
@@ -126,13 +126,13 @@ class ARDQN(ARQAlgorithm, DQN):
             initial_aspiration,
             policy,
             env,
-            learning_rate,
-            buffer_size,
-            learning_starts,
-            batch_size,
-            tau,
-            train_freq,
-            gradient_steps,
+            learning_rate=learning_rate,
+            buffer_size=buffer_size,
+            learning_starts=learning_starts,
+            batch_size=batch_size,
+            tau=tau,
+            train_freq=train_freq,
+            gradient_steps=gradient_steps,
             gamma=gamma,
             rho=rho,
             replay_buffer_class=SatisficingReplayBuffer,
@@ -156,8 +156,10 @@ class ARDQN(ARQAlgorithm, DQN):
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
-        self.delta_qmax_net = self.policy.delta_qmax_net
         self.delta_qmin_net = self.policy.delta_qmin_net
+        self.delta_qmin_net_target = self.policy.delta_qmin_net_target
+        self.delta_qmax_net = self.policy.delta_qmax_net
+        self.delta_qmax_net_target = self.policy.delta_qmax_net_target
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
@@ -415,6 +417,20 @@ class ARDQN(ARQAlgorithm, DQN):
             self.reset_aspiration()
             self.policy.set_training_mode(training_mode)
         return r
+
+    def _on_step(self) -> None:
+        super()._on_step()
+        if self._n_calls % max(self.target_update_interval // self.n_envs, 1) == 0:
+            polyak_update(self.delta_qmin_net.parameters(), self.delta_qmin_net_target.parameters(), self.tau)
+            polyak_update(self.delta_qmax_net.parameters(), self.delta_qmax_net_target.parameters(), self.tau)
+
+    def _setup_model(self) -> None:
+        super()._setup_model()
+        # Copy running stats for delta networks, see GH issue #996
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:
         """

@@ -56,4 +56,11 @@ class ARQLearningPolicy(ARQPolicy):
         self.q_table = QTable(self.observation_space, self.action_space).to(self.device)
         self.delta_qmax_table = DeltaQTable(self.observation_space, self.action_space).to(self.device)
         self.delta_qmin_table = DeltaQTable(self.observation_space, self.action_space).to(self.device)
-        super()._create_aliases(self.q_table, self.q_table, self.delta_qmin_table, self.delta_qmax_table)
+        super()._create_aliases(
+            self.q_table,
+            self.q_table,
+            self.delta_qmin_table,
+            self.delta_qmin_table,
+            self.delta_qmax_table,
+            self.delta_qmax_table,
+        )
