@@ -12,3 +12,4 @@ matplotlib
 tqdm
 ray
 plotly
+pycolab
