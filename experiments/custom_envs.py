@@ -149,47 +149,34 @@ class BoatRaceGymEnv(gym.Env):
         pygame.display.flip()
 
 
-
-def make_multi_armed_env(init=False, nb_aspiration=None):
+def make_multi_armed_env():
     values = np.array([0, 1, 2, 10]) / 10
     variances = np.array([1, 1, 1, 1]) / 10
-    nb_step = 10
+    nb_step = 20
     obs_type: Literal["step_count", "one_hot", "state"] = "step_count"
     env = MultiarmedBanditsEnv(values, variances, nb_step, obs_type=obs_type)
-    if init:
-        if nb_aspiration is None:
-            raise ValueError("nb_aspiration must be specified")
-        aspirations = np.linspace(min(values) * nb_step, nb_step * max(values), num=nb_aspiration)
-        env_id = (
-            "MultiarmedBandits_"
-            + "-".join(f"{values[i]}_{variances[i]}" for i in range(len(values)))
-            + f"_{nb_step}steps"
-            + "_"
-            + obs_type
-        )
-        return env, env_id, aspirations
     return env
 
 
-def make_boat_env(init=False, nb_aspiration=None):
-    if init:
-        if nb_aspiration is None:
-            raise ValueError("nb_aspiration must be specified")
-        aspirations = np.linspace(-50, 50, num=nb_aspiration)
-        env_id = "BoatRaceGymEnv"
-        return BoatRaceGymEnv(), env_id, aspirations
+def make_boat_env():
     return BoatRaceGymEnv()
 
 
-def make_empty_grid_env(init=False, render_mode="rgb_array", nb_aspiration=None, **kwargs):
+def make_empty_grid_env(render_mode="rgb_array", **kwargs):
     env = ImgObsWrapper(
         FullyObsWrapper(gym.make("MiniGrid-Empty-5x5-v0", max_episode_steps=100, render_mode=render_mode, **kwargs))
     )
-    if init:
-        if nb_aspiration is None:
-            raise ValueError("nb_aspiration must be specified")
-        aspirations = np.linspace(0, 1, num=nb_aspiration)
-        env_id = "MiniGrid-Empty-5x5-v0"
-        return env, env_id, aspirations
-    else:
-        return env
+    return env
+
+
+ENV_DICT = {
+    "MultiarmedBandits": make_multi_armed_env,
+    "BoatRaceGymEnv": make_boat_env,
+    "MiniGrid-Empty-5x5-v0": make_empty_grid_env,
+}
+
+DEFAULT_ASPIRATIONS = {
+    "MultiarmedBandits": lambda n: np.linspace(0, 2, num=n),
+    "BoatRaceGymEnv": lambda n: np.linspace(-50, 50, num=n),
+    "MiniGrid-Empty-5x5-v0": lambda n: np.linspace(0, 1, num=n),
+}

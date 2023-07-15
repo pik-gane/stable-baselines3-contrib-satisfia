@@ -1,15 +1,25 @@
+import argparse
 from os import path
 
-from experiments.cluster.experiment import LEARNING_STEPS, LOG_PATH, ASPIRATIONS, ENV
+from experiments.custom_envs import ENV_DICT
 from sb3_contrib import ARDQN
 from sb3_contrib.common.satisficing.evaluation import plot_ar
 
-models = list(
-    map(
-        lambda a: ARDQN.load(path.join(LOG_PATH, "ARDQN", str(round(a, 2)), "models", f"final_model_{LEARNING_STEPS}")),
-        ASPIRATIONS,
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--aspirations", nargs="+", type=float, required=True)
+    parser.add_argument("--env_id", type=str, required=True)
+    parser.add_argument("--log_path", type=str, required=True)
+    args = parser.parse_args()
+    env = ENV_DICT[args.env_id]()
+    models = list(
+        map(
+            lambda a: ARDQN.load(
+                path.join(args.log_path, "ARDQN", str(round(a, 2)), "models", "final_model")
+            ),
+            args.aspirations,
+        )
     )
-)
-fig = plot_ar(ENV, models)
-# Save plotly figure as html
-fig.write_html(path.join(LOG_PATH, "ARDQN", "results.html"))
+    fig = plot_ar(env, models)
+    # Save plotly figure as html
+    fig.write_html(path.join(args.log_path, "ARDQN", "results.html"))
