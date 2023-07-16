@@ -79,6 +79,10 @@ def dict_to_str_args(args):
 
 
 def submit_job_array(python_file, args, n_jobs, experiment_name, post_python_file=None, post_args=None):
+    # Assert python file and post_python file exist
+    assert os.path.isfile(python_file), f"File {python_file} does not exist"
+    if post_python_file is not None:
+        assert os.path.isfile(post_python_file), f"File {post_python_file} does not exist"
     with open(array_template_file, "r") as f:
         text = f.read()
     text = (
