@@ -1,5 +1,6 @@
 import argparse
 import os
+from os import path
 import subprocess
 import time
 from collections.abc import Iterable
@@ -13,62 +14,69 @@ EXCLUSIVE = "${EXCLUSIVE}"
 COMMAND_PLACEHOLDER = "${COMMAND_PLACEHOLDER}"
 GIVEN_NODE = "${GIVEN_NODE}"
 LOAD_ENV = "${LOAD_ENV}"
+WORK_DIR = "${WORK_DIR}"
 
 
-def submit_job(exp_name, memory=4, node=None, processor="cpu", duration="short", load_env="", command="", exclusive=False):
-    if node:
-        node_info = "#SBATCH -w {}".format(node)
-    else:
-        node_info = ""
-
-    job_name = "{}_{}".format(exp_name, time.strftime("%m%d-%H%M", time.localtime()))
-
-    memory_option = f"#SBATCH --mem={memory * 1_000}" if memory else ""
-
-    qos = "gpu" + duration if processor == "gpu" else duration
-    partition = "gpu" if processor == "gpu" else "standard"
-    partition_option = f"""
-#SBATCH --partition={partition}
-#SBATCH --qos={qos}
-{"#SBATCH --gres=gpu:k40m:1" if processor == "gpu" else ""}
-    """
-
-    exclusive = "#SBATCH --exclusive" if exclusive else ""
-
-    # ===== Modified the template script =====
-    with open(template_file, "r") as f:
-        text = f.read()
-    text = (
-        text.replace(JOB_NAME, job_name)
-        .replace(PARTITION_OPTION, partition_option)
-        .replace(MEMORY_OPTION, memory_option)
-        .replace(EXCLUSIVE, exclusive)
-        .replace(COMMAND_PLACEHOLDER, command)
-        .replace(LOAD_ENV, str(load_env))
-        .replace(GIVEN_NODE, node_info)
-    )
-
-    # ===== Save the script =====
-    script_file = os.path.join(dirname, "logs/{}.sh".format(job_name))
-    with open(script_file, "w") as f:
-        f.write(text)
-
-    # ===== Submit the job =====
-    subprocess.Popen(["sbatch", script_file], env=os.environ)
-    print(
-        "Job submitted! Script file is at: {}. Log file is at: {}".format(script_file, "./slurm/logs/{}.out".format(job_name))
-    )
-
+# def submit_job(exp_name, memory=4, node=None, processor="cpu", duration="short", load_env="", command="", exclusive=False):
+#
+#     I only use submit_job_array, but I keep this function for reference. It's not up to date.
+#
+#     if node:
+#         node_info = "#SBATCH -w {}".format(node)
+#     else:
+#         node_info = ""
+#
+#     job_name = "{}_{}".format(exp_name, time.strftime("%m%d-%H%M", time.localtime()))
+#
+#     memory_option = f"#SBATCH --mem={memory * 1_000}" if memory else ""
+#
+#     qos = "gpu" + duration if processor == "gpu" else duration
+#     partition = "gpu" if processor == "gpu" else "standard"
+#     partition_option = f"""
+# #SBATCH --partition={partition}
+# #SBATCH --qos={qos}
+# {"#SBATCH --gres=gpu:k40m:1" if processor == "gpu" else ""}
+#     """
+#
+#     exclusive = "#SBATCH --exclusive" if exclusive else ""
+#
+#     # ===== Modified the template script =====
+#     with open(template_file, "r") as f:
+#         text = f.read()
+#     text = (
+#         text.replace(JOB_NAME, job_name)
+#         .replace(PARTITION_OPTION, partition_option)
+#         .replace(MEMORY_OPTION, memory_option)
+#         .replace(EXCLUSIVE, exclusive)
+#         .replace(COMMAND_PLACEHOLDER, command)
+#         .replace(LOAD_ENV, str(load_env))
+#         .replace(GIVEN_NODE, node_info)
+#     )
+#
+#     # ===== Save the script =====
+#     script_file = os.path.join(dirname, "logs/{}.sh".format(job_name))
+#     with open(script_file, "w") as f:
+#         f.write(text)
+#
+#     # ===== Submit the job =====
+#     subprocess.Popen(["sbatch", script_file], env=os.environ)
+#     print(
+#         "Job submitted! Script file is at: {}. Log file is at: {}".format(script_file, "./slurm/logs/{}.out".format(job_name))
+#     )
+#
 
 ARRAY_SIZE = "${ARRAY_SIZE}"
 DEPENDENCY = "${DEPENDENCY}"
-array_template_file = "array_template.sh"
+array_template_file = path.join(dirname, "array_template.sh")
+work_dir = "/p/projects/ou/labs/gane/satisfia/stable-baselines3-contrib-satisfia/experiments/"
 
 
 def value_to_arg(value):
     if isinstance(value, Iterable) and not isinstance(value, str):
         return " ".join(map(str, value))
     elif isinstance(value, bool):
+        assert value, "Boolean argument must be True"
+        # If False, we should not add the --arg, so to support bool=False, we would need to check for bool args in the caller
         return ""
     else:
         return str(value)
@@ -78,39 +86,82 @@ def dict_to_str_args(args):
     return " ".join([f"--{k} {value_to_arg(v)}" for k, v in args.items()])
 
 
-def submit_job_array(python_file, args, n_jobs, experiment_name, post_python_file=None, post_args=None):
+def submit_job_array(
+    python_file,
+    args: dict,
+    n_jobs,
+    experiment_name,
+    post_python_file=None,
+    post_args: dict = None,
+    testing=False,
+    wandb_sync=False,
+):
     # Assert python file and post_python file exist
+    python_file = path.join(dirname, python_file)
+    if post_python_file is not None:
+        post_python_file = path.join(dirname, post_python_file)
     assert os.path.isfile(python_file), f"File {python_file} does not exist"
     if post_python_file is not None:
         assert os.path.isfile(post_python_file), f"File {post_python_file} does not exist"
     with open(array_template_file, "r") as f:
         text = f.read()
     text = (
-        text.replace(COMMAND_PLACEHOLDER, f"python {python_file} {dict_to_str_args(args)}")
+        text.replace(COMMAND_PLACEHOLDER, f"python3 {python_file} {dict_to_str_args(args)}")
         .replace(ARRAY_SIZE, str(n_jobs - 1))
         .replace(DEPENDENCY, "")
+        .replace(JOB_NAME, experiment_name)
+        .replace(WORK_DIR, work_dir)
     )
     script_file = f"./logs/array_{experiment_name}.sh"
     with open(script_file, "w") as f:
         f.write(text)
-    output = subprocess.run(["sbatch", "--parsable", script_file], capture_output=True, text=True)
+    if not testing:
+        output = subprocess.run(["sbatch", "--parsable", script_file], capture_output=True, text=True)
+        print(f"Job submitted! Script file is at: {script_file}. Log file is at: ./slurm/logs/{experiment_name}.out")
+    else:
+        output = None
     if post_python_file:
         if post_args is None:
             post_args = {}
         # Add a job with a dependency on the array job
-        job_id = output.stdout.strip()
-        job_id = int(job_id if job_id.isdigit() else job_id.split(";")[0])
+        if not testing:
+            job_id = output.stdout.strip()
+            job_id = int(job_id if job_id.isdigit() else job_id.split(";")[0])
+            print(f"Post job will be dependent on job {job_id}")
+        else:
+            job_id = "{DUMMY_JOB_ID}"
         with open(array_template_file, "r") as f:
             text = f.read()
         text = (
-            text.replace(COMMAND_PLACEHOLDER, f"python {post_python_file} {dict_to_str_args(post_args)}")
+            text.replace(COMMAND_PLACEHOLDER, f"python3 {post_python_file} {dict_to_str_args(post_args)}")
             .replace(ARRAY_SIZE, str(0))
             .replace(DEPENDENCY, f"#SBATCH --dependency=afterok:{job_id}")
+            .replace(JOB_NAME, f"post_{experiment_name}")
+            .replace(WORK_DIR, work_dir)
         )
         script_file = f"./logs/post_{experiment_name}.sh"
         with open(script_file, "w") as f:
             f.write(text)
-        subprocess.run(["sbatch", script_file])
+        if not testing:
+            subprocess.run(["sbatch", script_file])
+        if wandb_sync:
+            if args.get("log_path") is None:
+                raise ValueError("log_path must be specified in args to sync with wandb")
+            if not testing:
+                subprocess.run(
+                    [
+                        "srun",
+                        "--partition=io",
+                        "--qos=io",
+                        "-D",
+                        work_dir,
+                        "--dependency",
+                        f"afterok:{job_id}",
+                        "wandb",
+                        "sync",
+                        args["log_path"],
+                    ]
+                )
 
 
 if __name__ == "__main__":

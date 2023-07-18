@@ -2,7 +2,7 @@
 from typing import Optional, Any
 
 import pygame
-from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper, RGBImgObsWrapper
 
 try:
     from typing import Literal
@@ -180,3 +180,7 @@ DEFAULT_ASPIRATIONS = {
     "BoatRaceGymEnv": lambda n: np.linspace(-50, 50, num=n),
     "MiniGrid-Empty-5x5-v0": lambda n: np.linspace(0, 1, num=n),
 }
+
+MULTI_ARMED_BANDITS = "MultiarmedBandits"
+BOAT_RACE = "BoatRaceGymEnv"
+EMPTY_GRID = "MiniGrid-Empty-5x5-v0"

@@ -2,10 +2,10 @@
 # shellcheck disable=SC2206
 #SBATCH --job-name=${JOB_NAME}
 ${DEPENDENCY}
+#SBATCH --workdir=${WORK_DIR}
 #SBATCH --output=./logs/slurm/${JOB_NAME}.out
 #SBATCH --error=./logs/slurm/${JOB_NAME}.out
-#SBATCH --workdir=/p/projects/ou/labs/gane/satisfia/stable-baselines3-contrib-satisfia/experiments/
-#SBATCH --array=0-${ARRAY_SIZE}%
+#SBATCH --array=0-${ARRAY_SIZE}
 
 # Load modules or your own conda environment here
 module load anaconda/2021.11d
