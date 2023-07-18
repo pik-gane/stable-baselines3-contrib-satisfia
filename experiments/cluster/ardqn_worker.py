@@ -60,7 +60,7 @@ if __name__ == "__main__":
         # Create model
         model = ARDQN(policy, env, aspiration, verbose=0, rho=rho, mu=mu)
         # Setup logger
-        log_path = path.join(args.log_path, "ARDQN", str(round(aspiration, 2)))
+        log_path = path.join(args.log_path, "ARDQN", name)
         tb_logger = configure(log_path, ["tensorboard"])
         model.set_logger(tb_logger)
         # Setup save callback

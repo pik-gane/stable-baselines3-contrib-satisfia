@@ -21,8 +21,7 @@ MUS = np.linspace(0, 1, NB_MU)
 if __name__ == "__main__":
     # Compute the cartesian product of rhos mus and aspirations
     rhos, mus, aspirations = list(zip(*product(RHOS, MUS, ASPIRATIONS)))
-    names = [f"rho={rho}_mu={mu}_aspiration={aspiration}" for rho, mu, aspiration in zip(rhos, mus, aspirations)]
-    names += ["DQN"] * TRAIN_DQN
+    ar_names = [f"rho={rho}_mu={mu}_aspiration={aspiration}" for rho, mu, aspiration in zip(rhos, mus, aspirations)]
     nb_exp = len(aspirations) + TRAIN_DQN
     worker_args = {
         "aspirations": aspirations,
@@ -32,10 +31,10 @@ if __name__ == "__main__":
         "rhos": rhos,
         "mus": mus,
         "policies": ["MlpPolicy"] * nb_exp,
-        "names": names,
+        "names": ar_names + ["DQN"] * TRAIN_DQN
     }
     post_args = {
-        "names": names,
+        "names": ar_names,
         "env_id": ENV_ID,
         "log_path": LOG_PATH,
     }
@@ -44,7 +43,7 @@ if __name__ == "__main__":
         worker_args,
         nb_exp,
         EXPERIMENT_NAME,
-        "post_experiment.py",
+        post_python_file="post_experiment.py",
         post_args=post_args,
         testing=False,
         wandb_sync=True,
