@@ -14,7 +14,11 @@ P = 1
 
 
 class IteratedPD(Env):
-    """Iterated Prisoner's Dilemma environment."""
+    """Iterated Prisoner's Dilemma environment.
+    Max return is 3 x T against GrimTrigger or TitForTat. 
+    Against GrimTrigger, min return is 5 (defect once, then cooperate forever).
+    Against TitForTat, min return is 5 + T-1 (defect every time).
+    Against other opponents, min and max returns are more complicated."""
 
     # parameters:
     T = None
@@ -50,6 +54,7 @@ class IteratedPD(Env):
         return -1, {}
     
     def opponent_action(self):
+        """https://plato.stanford.edu/entries/prisoner-dilemma/strategy-table.html"""
         if self.opponent == "TitForTat":
             if self.t == 0:
                 # start with cooperation:
@@ -57,6 +62,36 @@ class IteratedPD(Env):
             else:
                 # do what the opponent did last time:
                 return self.history[-1][0]
+
+        elif self.opponent == "STFT":
+            if self.t == 0:
+                # start with defection (!):
+                return 0
+            else:
+                # do what the opponent did last time:
+                return self.history[-1][0]
+
+        if self.opponent == "GTFT":
+            if self.t == 0:
+                # start with cooperation:
+                return 1
+            elif self.history[-1][0] == 1:
+                # cooperate after cooperation:
+                return 1
+            else:
+                # rarely cooperate after defection:
+                return 1 if self.np_random.rand() < min(1 - (T-R)/(R-S), (R-P)/(T-P)) else 0
+
+        elif self.opponent == "TFTT":
+            if self.t < 2:
+                # start with cooperation:
+                return 1
+            elif self.history[-1][0] == 0 and self.history[-2][0] == 0:
+                # defect after two defections:
+                return 0
+            else:
+                return 1
+
         elif self.opponent == "GrimTrigger":
             if self.t == 0:
                 # start with cooperation:
@@ -70,5 +105,16 @@ class IteratedPD(Env):
             else:
                 # continue cooperation:
                 return 1
+
+        if self.opponent == "Pavlov":
+            if self.t == 0:
+                # start with cooperation:
+                return 1
+            elif self.history[-1][1] == self.history[-1][0]:
+                # cooperate when both did the same:
+                return 1
+            else:
+                return 0
+
         else:
             raise NotImplementedError(f"Unknown opponent type: {self.opponent}")
