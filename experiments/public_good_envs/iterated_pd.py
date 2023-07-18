@@ -14,7 +14,10 @@ P = 1
 
 
 class IteratedPD(Env):
-    """Iterated Prisoner's Dilemma environment."""
+    """Iterated Prisoner's Dilemma environment.
+    Max return is 3 x T. 
+    Against GrimTrigger, min return is 5 (defect once, then cooperate forever).
+    Against TitForTat, min return is 5 + T-1 (defect every time)."""
 
     # parameters:
     T = None
