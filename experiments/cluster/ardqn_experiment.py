@@ -11,7 +11,7 @@ NB_ASPIRATION = 5
 NB_RHO = 9
 NB_MU = 9
 EXPERIMENT_NAME = "ardqn_experiment_aspiration_rho_mu"
-ENV_ID = EMPTY_GRID
+ENV_ID = BOAT_RACE
 LOG_PATH = path.join("logs", EXPERIMENT_NAME, ENV_ID)
 ASPIRATIONS = DEFAULT_ASPIRATIONS[ENV_ID](NB_ASPIRATION)
 TRAIN_DQN = True
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         "ardqn_worker.py",
         worker_args,
         nb_exp,
-        EXPERIMENT_NAME,
+        EXPERIMENT_NAME + "_" + ENV_ID,
         post_python_file="post_experiment.py",
         post_args=post_args,
         testing=False,
