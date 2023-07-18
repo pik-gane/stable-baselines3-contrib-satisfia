@@ -47,7 +47,7 @@ class IteratedPD(Env):
         super().reset(seed=seed)
         self.t = 0
         self.history = []
-        return None, {}
+        return -1, {}
     
     def opponent_action(self):
         if self.opponent == "TitForTat":
