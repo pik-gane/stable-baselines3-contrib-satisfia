@@ -117,7 +117,7 @@ def submit_job_array(
         f.write(text)
     if not testing:
         output = subprocess.run(["sbatch", "--parsable", script_file], capture_output=True, text=True)
-        print(f"Job submitted! Script file is at: {script_file}. Log file is at: ./slurm/logs/{experiment_name}.out")
+        print(f"Job {output} submitted! Script file is at: {script_file}. Log file is at: ./slurm/logs/{experiment_name}.out")
     else:
         output = None
     if post_python_file:
@@ -150,16 +150,19 @@ def submit_job_array(
             if not testing:
                 subprocess.run(
                     [
-                        "srun",
+                        "sbatch",
                         "--partition=io",
                         "--qos=io",
                         "-D",
-                        work_dir,
+                        "--background",
+                        f"--output=./slurm/logs/{experiment_name}wandb.out",
+                        f"--error=./slurm/logs/{experiment_name}wandb.err",
+                        "-J",
+                        f"wandb_{experiment_name}",
                         "--dependency",
                         f"afterok:{job_id}",
-                        "wandb",
-                        "sync",
-                        args["log_path"],
+                        "--wrap",
+                        f'"wandb sync {args["log_path"]}"',
                     ]
                 )
 
