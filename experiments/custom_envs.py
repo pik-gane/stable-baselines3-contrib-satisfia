@@ -3,6 +3,7 @@ from typing import Optional, Any
 
 import pygame
 from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper, RGBImgObsWrapper
+from public_good_envs import IteratedPD
 
 try:
     from typing import Literal
@@ -169,18 +170,27 @@ def make_empty_grid_env(render_mode="rgb_array", **kwargs):
     return env
 
 
-ENV_DICT = {
-    "MultiarmedBandits": make_multi_armed_env,
-    "BoatRaceGymEnv": make_boat_env,
-    "MiniGrid-Empty-5x5-v0": make_empty_grid_env,
-}
+def make_prisoners_dilemma_env(
+    nb_rounds: int = 10, opponent: Literal["TitForTat", "STFT", "GTFT", "TFTT", "GrimTrigger", "Pavlov"] = "TitForTat"
+):
+    return IteratedPD(nb_rounds, opponent)
 
-DEFAULT_ASPIRATIONS = {
-    "MultiarmedBandits": lambda n: np.linspace(0, 2, num=n),
-    "BoatRaceGymEnv": lambda n: np.linspace(-50, 50, num=n),
-    "MiniGrid-Empty-5x5-v0": lambda n: np.linspace(0, 1, num=n),
-}
 
 MULTI_ARMED_BANDITS = "MultiarmedBandits"
 BOAT_RACE = "BoatRaceGymEnv"
 EMPTY_GRID = "MiniGrid-Empty-5x5-v0"
+PRISONERS = "PrisonersDilemma"
+
+ENV_DICT = {
+    MULTI_ARMED_BANDITS: make_multi_armed_env,
+    BOAT_RACE: make_boat_env,
+    EMPTY_GRID: make_empty_grid_env,
+    PRISONERS: make_prisoners_dilemma_env,
+}
+
+DEFAULT_ASPIRATIONS = {
+    MULTI_ARMED_BANDITS: lambda n: np.linspace(0, 2, num=n),
+    BOAT_RACE: lambda n: np.linspace(-50, 50, num=n),
+    EMPTY_GRID: lambda n: np.linspace(0, 1, num=n),
+    PRISONERS: lambda n: np.linspace(0, 5, num=n),
+}
