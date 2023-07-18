@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Literal
 
 from gymnasium import Env, spaces
 
@@ -15,13 +15,13 @@ P = 1
 
 class IteratedPD(Env):
     """Iterated Prisoner's Dilemma environment.
-    Max return is 3 x T against GrimTrigger or TitForTat. 
+    Max return is 3 x T against GrimTrigger or TitForTat.
     Against GrimTrigger, min return is 5 (defect once, then cooperate forever).
     Against TitForTat, min return is 5 + T-1 (defect every time).
     Against other opponents, min and max returns are more complicated."""
 
     # parameters:
-    T = None
+    nb_rounds = None
     """number of rounds to play"""
     opponent = None
     # state:
@@ -30,29 +30,32 @@ class IteratedPD(Env):
     history = None
     """The history of actions taken by the agents."""
 
-    def __init__(self, T, opponent):
+    def __init__(
+        self,
+        nb_rounds: int = 10,
+        opponent: Literal["TitForTat", "STFT", "GTFT", "TFTT", "GrimTrigger", "Pavlov"] = "TitForTat",
+    ):
         super().__init__()
         self.action_space = spaces.Discrete(2)
-        self.observation_space = spaces.Discrete(4)
-        self.T = T
+        self.observation_space = spaces.Discrete(5)
+        self.nb_rounds = nb_rounds
         self.opponent = opponent
+        if opponent not in ["TitForTat", "STFT", "GTFT", "TFTT", "GrimTrigger", "Pavlov"]:
+            raise NotImplementedError(f"Unknown opponent: {opponent}")
 
-    def step(
-        self, action
-    ):
-        
+    def step(self, action):
         pair = (action, self.opponent_action())
         self.history.append(pair)
         self.t += 1
-        r = {(0,0): P, (0,1): T, (1,0): S, (1,1): R}[pair]
-        return pair[0] + 2*pair[1], r, self.t == self.T, False, {}
+        r = {(0, 0): P, (0, 1): T, (1, 0): S, (1, 1): R}[pair] / self.nb_rounds
+        return pair[0] + 2 * pair[1], r, self.t == self.nb_rounds, False, {"history": self.history.copy(), "time": self.t}
 
-    def reset(self, *, seed = None, options = None):
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.t = 0
         self.history = []
-        return -1, {}
-    
+        return 4, {}
+
     def opponent_action(self):
         """https://plato.stanford.edu/entries/prisoner-dilemma/strategy-table.html"""
         if self.opponent == "TitForTat":
@@ -80,7 +83,7 @@ class IteratedPD(Env):
                 return 1
             else:
                 # rarely cooperate after defection:
-                return 1 if self.np_random.rand() < min(1 - (T-R)/(R-S), (R-P)/(T-P)) else 0
+                return 1 if self.np_random.rand() < min(1 - (T - R) / (R - S), (R - P) / (T - P)) else 0
 
         elif self.opponent == "TFTT":
             if self.t < 2:
