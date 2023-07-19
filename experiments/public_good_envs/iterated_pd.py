@@ -24,6 +24,8 @@ class IteratedPD(Env):
     nb_rounds = None
     """number of rounds to play"""
     opponent = None
+    """opponent strategy"""
+    
     # state:
     t = None
     """The current timestep."""

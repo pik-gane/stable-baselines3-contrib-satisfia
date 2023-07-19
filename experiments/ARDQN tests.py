@@ -5,7 +5,8 @@ import numpy as np
 from stable_baselines3 import DQN
 from stable_baselines3.common.logger import configure
 
-from custom_envs import MultiarmedBanditsEnv, BoatRaceGymEnv
+from public_good_envs import PublicGood
+#from custom_envs import MultiarmedBanditsEnv, BoatRaceGymEnv
 from sb3_contrib import ARDQN
 from sb3_contrib.common.satisficing.evaluation import plot_ar
 from utils import open_tensorboard, DQNCallback
@@ -22,7 +23,8 @@ env_id = 'MultiarmedBandits_' + '-'.join(str(i) for i in values) + f'_{nb_step}s
 
 
 def make_env(obs_type=None, **kwargs):
-    return MultiarmedBanditsEnv(values, variances, nb_step, obs_type=obs_type, **kwargs)
+    return PublicGood(nb_rounds=10, n_players=10, alpha=2, sigma=1)
+#    return MultiarmedBanditsEnv(values, variances, nb_step, obs_type=obs_type, **kwargs)
 
 # def make_env():
 #     return BoatRaceGymEnv()
