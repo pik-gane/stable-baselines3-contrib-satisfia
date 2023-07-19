@@ -57,4 +57,5 @@ model.learn(LEARNING_STEPS, callback=[DQNCallback()])
 model.set_logger(tb_logger(path.join("ARDQN", str(round(aspiration, 2)))))
 model.learn(LEARNING_STEPS)  # , log_interval=10000000)
 model.verbose = 0
-plot = plot_ar(env, [model])
+plot = plot_ar([model], env=env)
+plot.show(renderer='browser')

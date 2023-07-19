@@ -154,7 +154,7 @@ def submit_job_array(
                         "--partition=io",
                         "--qos=io",
                         "-D",
-                        "--background",
+                        work_dir,
                         f"--output=./slurm/logs/{experiment_name}wandb.out",
                         f"--error=./slurm/logs/{experiment_name}wandb.err",
                         "-J",

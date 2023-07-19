@@ -183,32 +183,53 @@ def evaluate_policy(
     return (mean_reward, std_reward), infos
 
 
-def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
-    eval_env = Monitor(env)
+def plot_ar(
+    models: List[ARQAlgorithm],
+    results: Optional[List[Tuple[float, float, Dict[str, np.ndarray]]]] = None,
+    env: Optional[gym.Env] = None,
+    n_eval_episodes: int = 100,
+    **kwargs,
+) -> Figure:
+    """
+    Plot the AR algorithm results.
+
+    :param models: List of ARQAlgorithm models to plot
+    :param results: List of results to plot, can be None if env is provided
+    :param env: Environment to use for evaluation, can be None if results is provided
+    :param n_eval_episodes: Number of episodes to use for evaluation
+
+    :return: Plotly figure
+    """
+    if env is not None:
+        eval_env = Monitor(env)
+    else:
+        assert results is not None, "Either env or results must be provided"
 
     # Create subplots
     fig = make_subplots(
-        rows=8,
-        cols=1,
+        rows=4,
+        cols=2,
         subplot_titles=(
             "Mean Lambda for each step",
             "Mean Aspiration Value for each step",
             "Mean Remaining return to go for each step",
-            f"Mean Reward over {n_eval_episodes} episodes as a Function of Aspiration"
-            f"Mean Reward over {n_eval_episodes} episodes as a Function of Rho"
+            f"Mean Reward over {n_eval_episodes} episodes as a Function of Aspiration",
+            f"Mean Reward over {n_eval_episodes} episodes as a Function of Rho",
             f"Mean Reward over {n_eval_episodes} episodes as a Function of Mu",
             "Standard Deviation of the Mean Reward compared to the Aspiration",
             "Maximum Deviation of the Mean Reward compared to the Aspiration",
         ),
     )
+    fig.update_layout(height=1200)
 
     # create a continuous colorscale with len(models) colors that goes from green to red
     if len(models) > 1:
         colorscale = [
-            f"rgb({int(255 * (1 - i / (len(models) - 1)))}, {int(255 * i / (len(models) - 1))}, 0)" for i in range(len(models))
+            f"rgba({int(255 * (1 - i / (len(models) - 1)))}, {int(255 * i / (len(models) - 1))}, 0, 1)"
+            for i in range(len(models))
         ]
     else:
-        colorscale = ["rgb(0, 255, 0)"]
+        colorscale = ["rgba(0, 255, 0,1)"]
 
     for i in tqdm(range(len(models))):
         model = models[i]
@@ -216,10 +237,14 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
         try:
             model_name = model.name
         except AttributeError:
-            model_name = (str(round(model.policy.initial_aspiration, 2)),)
-        (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes, **kwargs)
-        m.mean_reward = m
-        m.std_reward = std
+            model_name = str(round(model.policy.initial_aspiration, 2))
+        if results is None:
+            (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes, **kwargs)
+        else:
+            m, std, infos = results[i]
+        model.mean_reward = m
+        model.std_reward = std
+        model.i = i
         fig.add_trace(
             go.Scatter(
                 y=infos["lambda"],
@@ -241,8 +266,8 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
                 showlegend=False,
                 legendgroup=model_name,
             ),
-            row=2,
-            col=1,
+            row=1,
+            col=2,
         )
         fig.add_trace(
             go.Scatter(
@@ -253,13 +278,15 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
                 showlegend=False,
                 legendgroup=model_name,
             ),
-            row=3,
+            row=2,
             col=1,
         )
 
-    aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
+    aspirations_list = list(map(lambda x: x.policy.initial_aspiration, models))
+    rho_list = list(map(lambda x: x.policy.rho, models))
+    mu_list = list(map(lambda x: x.mu, models))
 
-    def plot_reward(x, models, name, row):
+    def plot_reward(x, models, name, row, col, color):
         mean_rewards = np.array([m.mean_reward for m in models])
         std_rewards = np.array([m.std_reward for m in models])
         fig.add_trace(
@@ -267,104 +294,115 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
                 x=x,
                 y=mean_rewards,
                 name=name,
+                legendgroup=name,
                 line=dict(
-                    color="rgb(0,176,246)",
+                    color=color,
                 ),
             ),
             row=row,
-            col=1,
+            col=col,
         )
         fig.add_trace(
             go.Scatter(
-                x=aspirations, y=mean_rewards + std_rewards, mode="lines", showlegend=False, line=dict(color="rgba(0,0,0,0)")
+                x=x,
+                y=mean_rewards + std_rewards,
+                mode="lines",
+                showlegend=False,
+                line=dict(color="rgba(0,0,0,0)"),
+                legendgroup=name,
             ),
             row=row,
-            col=1,
+            col=col,
         )
         fig.add_trace(
             go.Scatter(
-                x=aspirations,
+                x=x,
                 y=mean_rewards - std_rewards,
                 mode="lines",
                 fill="tonexty",
-                name="Reward Standard Deviation",
                 line=dict(color="rgba(0,0,0,0)"),
-                fillcolor="rgba(0,176,246,0.2)",
-            ),
-            row=row,
-            col=1,
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=sorted(list(set(aspirations))),
-                y=sorted(list(set(aspirations))),
-                mode="lines",
-                line=dict(dash="dash", color="rgba(0,0,0,0.5)"),
+                fillcolor=",".join(color.split(",")[:-1] + ["0.2)"]),
                 showlegend=False,
+                legendgroup=name,
             ),
             row=row,
-            col=1,
+            col=col,
         )
 
-    plot_reward(aspirations, models, f"Mean reward over {n_eval_episodes} episodes", 4)
     mu_partitions = defaultdict(list)
     rho_partitions = defaultdict(list)
     aspiration_partitions = defaultdict(list)
     for model in models:
         mu_partitions[(model.policy.initial_aspiration, model.policy.rho)].append(model)
-        rho_partitions[(model.policy.initial_aspiration, model.policy.mu)].append(model)
-        aspiration_partitions[(model.policy.rho, model.policy.mu)].append(model)
+        rho_partitions[(model.policy.initial_aspiration, model.mu)].append(model)
+        aspiration_partitions[(model.policy.rho, model.mu)].append(model)
     for (aspiration, mu), models in rho_partitions.items():
         rhos = list(map(lambda x: x.policy.rho, models))
-        plot_reward(rhos, models, f"Mu: {mu}, Aspiration: {aspiration}", 5)
+        plot_reward(rhos, models, f"Mu: {round(mu,2)}, Aspiration: {round(aspiration,2)}", 3, 1, colorscale[models[0].i])
     for (aspiration, rho), models in mu_partitions.items():
-        mus = list(map(lambda x: x.policy.mu, models))
-        plot_reward(mus, models, f"Rho: {rho}, Aspiration: {aspiration}", 6)
+        mus = list(map(lambda x: x.mu, models))
+        plot_reward(mus, models, f"Rho: {round(rho,2)}, Aspiration: {round(aspiration,2)}", 3, 2, colorscale[models[0].i])
+    for (rho, mu), models in aspiration_partitions.items():
+        aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
+        plot_reward(aspirations, models, f"Rho:{round(rho,2)}, Mu:{round(mu,2)}", 2, 2, colorscale[models[0].i])
+    fig.add_trace(
+        go.Scatter(
+            x=sorted(list(set(aspirations_list))),
+            y=sorted(list(set(aspirations_list))),
+            mode="lines",
+            line=dict(dash="dash", color="rgba(0,0,0,0.5)"),
+            showlegend=False,
+        ),
+        row=2,
+        col=2,
+    )
     # Add a heatmap of the deviation of the mean reward compared to the aspiration
     std_dev = {}
     max_std_dev = {}
     for (rho, mu), models in aspiration_partitions.items():
-        mean_r = np.array([m.mean_rewards for m in models])
+        mean_r = np.array([m.mean_reward for m in models])
         asps = np.array([m.policy.initial_aspiration for m in models])
-        std_dev[(rho, mu)] = (mean_r - asps).square().mean().sqrt()
-        max_std_dev[(rho, mu)] = (mean_r - asps).square().max().sqrt()
-
+        std_dev[(rho, mu)] = np.sqrt(np.square((mean_r - asps)).mean())
+        max_std_dev[(rho, mu)] = np.sqrt(np.square((mean_r - asps)).max())
     fig.add_trace(
         go.Heatmap(
-            z=[[std_dev[(rho, mu)] for rho in sorted(list(set(rhos)))] for mu in sorted(list(set(mus)))],
-            x=sorted(list(set(rhos))),
-            y=sorted(list(set(mus))),
+            z=[[std_dev[(rho, mu)] for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
+            x=sorted(list(set(rho_list))),
+            y=sorted(list(set(mu_list))),
+            coloraxis="coloraxis",
         ),
-        row=7,
+        row=4,
         col=1,
     )
     fig.add_trace(
         go.Heatmap(
-            z=[[max_std_dev[(rho, mu)] for rho in sorted(list(set(rhos)))] for mu in sorted(list(set(mus)))],
-            x=sorted(list(set(rhos))),
-            y=sorted(list(set(mus))),
+            z=[[max_std_dev[(rho, mu)] for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
+            x=sorted(list(set(rho_list))),
+            y=sorted(list(set(mu_list))),
+            coloraxis="coloraxis",
         ),
-        row=8,
-        col=1,
+        row=4,
+        col=2,
     )
-
+    # Set coloraxis orientation ro horizontal and put it at the bottom of the plot and change color to reds
+    fig.update_layout(coloraxis_colorbar=dict(orientation="h", y=-0.05, yanchor="top"), coloraxis=dict(colorscale="reds"))
     fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
     fig.update_yaxes(title_text="Lambda", row=1, col=1)
     fig.update_xaxes(title_text="Environment steps", row=1, col=1)
-    fig.update_yaxes(title_text="Aspiration", row=2, col=1)
+    fig.update_yaxes(title_text="Aspiration", row=1, col=2)
+    fig.update_xaxes(title_text="Environment steps", row=1, col=2)
+    fig.update_yaxes(title_text="Remaining return to go", row=2, col=1)
     fig.update_xaxes(title_text="Environment steps", row=2, col=1)
-    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=3, col=1)
-    fig.update_xaxes(title_text="Aspiration", row=4, col=1)
-    fig.update_yaxes(title_text="Mean reward", row=4, col=1)
-    fig.update_xaxes(title_text="Rho", row=5, col=1)
-    fig.update_yaxes(title_text="Mean reward", row=5, col=1)
-    fig.update_xaxes(title_text="Mu", row=6, col=1)
-    fig.update_yaxes(title_text="Mean reward", row=6, col=1)
-    fig.update_xaxes(title_text="Rho", row=7, col=1)
-    fig.update_yaxes(title_text="Mu", row=7, col=1)
-    fig.update_xaxes(title_text="Rho", row=8, col=1)
-    fig.update_yaxes(title_text="Mu", row=8, col=1)
+    fig.update_xaxes(title_text="Aspiration", row=2, col=2)
+    fig.update_yaxes(title_text="Mean reward", row=2, col=2)
+    fig.update_xaxes(title_text="Rho", row=3, col=1)
+    fig.update_yaxes(title_text="Mean reward", row=3, col=1)
+    fig.update_xaxes(title_text="Mu", row=3, col=2)
+    fig.update_yaxes(title_text="Mean reward", row=3, col=2)
+    fig.update_xaxes(title_text="Rho", row=4, col=1)
+    fig.update_yaxes(title_text="Mu", row=4, col=1)
+    fig.update_xaxes(title_text="Rho", row=4, col=2)
+    fig.update_yaxes(title_text="Mu", row=4, col=2)
 
     return fig
 

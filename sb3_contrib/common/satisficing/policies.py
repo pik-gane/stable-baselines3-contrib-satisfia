@@ -11,6 +11,8 @@ from sb3_contrib.common.satisficing.utils import interpolate, ratio
 class ARQPolicy(BasePolicy):
 
     device: th.device
+    rho: float
+    gamma: float
 
     def __init__(
         self,
