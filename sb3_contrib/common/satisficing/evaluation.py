@@ -1,4 +1,5 @@
 import warnings
+from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -187,18 +188,19 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
 
     # Create subplots
     fig = make_subplots(
-        rows=4,
+        rows=8,
         cols=1,
         subplot_titles=(
             "Mean Lambda for each step",
             "Mean Aspiration Value for each step",
             "Mean Remaining return to go for each step",
-            "Mean Reward over 500 episodes",
+            f"Mean Reward over {n_eval_episodes} episodes as a Function of Aspiration"
+            f"Mean Reward over {n_eval_episodes} episodes as a Function of Rho"
+            f"Mean Reward over {n_eval_episodes} episodes as a Function of Mu",
+            "Standard Deviation of the Mean Reward compared to the Aspiration",
+            "Maximum Deviation of the Mean Reward compared to the Aspiration",
         ),
     )
-
-    mean_rewards = []
-    std_rewards = []
 
     # create a continuous colorscale with len(models) colors that goes from green to red
     if len(models) > 1:
@@ -210,19 +212,22 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
 
     for i in tqdm(range(len(models))):
         model = models[i]
+        # Check if model.name exists, else use model.policy.initial_aspiration
+        try:
+            model_name = model.name
+        except AttributeError:
+            model_name = (str(round(model.policy.initial_aspiration, 2)),)
         (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes, **kwargs)
-        mean_rewards.append(m)
-        std_rewards.append(std)
-        a = model.policy.initial_aspiration
-
+        m.mean_reward = m
+        m.std_reward = std
         fig.add_trace(
             go.Scatter(
                 y=infos["lambda"],
-                name=str(round(a, 1)),
+                name=model_name,
                 line=dict(
                     color=colorscale[i],
                 ),
-                legendgroup=str(round(a, 1)),
+                legendgroup=model_name,
             ),
             row=1,
             col=1,
@@ -234,7 +239,7 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
                     color=colorscale[i],
                 ),
                 showlegend=False,
-                legendgroup=str(round(a, 1)),
+                legendgroup=model_name,
             ),
             row=2,
             col=1,
@@ -246,188 +251,120 @@ def plot_ar(env, models, n_eval_episodes: int = 100, **kwargs) -> Figure:
                     color=colorscale[i],
                 ),
                 showlegend=False,
-                legendgroup=str(round(a, 1)),
+                legendgroup=model_name,
             ),
             row=3,
             col=1,
         )
 
     aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
-    mean_rewards = np.array(mean_rewards)
-    std_rewards = np.array(std_rewards)
+
+    def plot_reward(x, models, name, row):
+        mean_rewards = np.array([m.mean_reward for m in models])
+        std_rewards = np.array([m.std_reward for m in models])
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean_rewards,
+                name=name,
+                line=dict(
+                    color="rgb(0,176,246)",
+                ),
+            ),
+            row=row,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=aspirations, y=mean_rewards + std_rewards, mode="lines", showlegend=False, line=dict(color="rgba(0,0,0,0)")
+            ),
+            row=row,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=aspirations,
+                y=mean_rewards - std_rewards,
+                mode="lines",
+                fill="tonexty",
+                name="Reward Standard Deviation",
+                line=dict(color="rgba(0,0,0,0)"),
+                fillcolor="rgba(0,176,246,0.2)",
+            ),
+            row=row,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=sorted(list(set(aspirations))),
+                y=sorted(list(set(aspirations))),
+                mode="lines",
+                line=dict(dash="dash", color="rgba(0,0,0,0.5)"),
+                showlegend=False,
+            ),
+            row=row,
+            col=1,
+        )
+
+    plot_reward(aspirations, models, f"Mean reward over {n_eval_episodes} episodes", 4)
+    mu_partitions = defaultdict(list)
+    rho_partitions = defaultdict(list)
+    aspiration_partitions = defaultdict(list)
+    for model in models:
+        mu_partitions[(model.policy.initial_aspiration, model.policy.rho)].append(model)
+        rho_partitions[(model.policy.initial_aspiration, model.policy.mu)].append(model)
+        aspiration_partitions[(model.policy.rho, model.policy.mu)].append(model)
+    for (aspiration, mu), models in rho_partitions.items():
+        rhos = list(map(lambda x: x.policy.rho, models))
+        plot_reward(rhos, models, f"Mu: {mu}, Aspiration: {aspiration}", 5)
+    for (aspiration, rho), models in mu_partitions.items():
+        mus = list(map(lambda x: x.policy.mu, models))
+        plot_reward(mus, models, f"Rho: {rho}, Aspiration: {aspiration}", 6)
+    # Add a heatmap of the deviation of the mean reward compared to the aspiration
+    std_dev = {}
+    max_std_dev = {}
+    for (rho, mu), models in aspiration_partitions.items():
+        mean_r = np.array([m.mean_rewards for m in models])
+        asps = np.array([m.policy.initial_aspiration for m in models])
+        std_dev[(rho, mu)] = (mean_r - asps).square().mean().sqrt()
+        max_std_dev[(rho, mu)] = (mean_r - asps).square().max().sqrt()
 
     fig.add_trace(
-        go.Scatter(
-            x=aspirations,
-            y=mean_rewards,
-            name="Mean reward over 500 episodes",
-            line=dict(
-                color="rgb(0,176,246)",
-            ),
+        go.Heatmap(
+            z=[[std_dev[(rho, mu)] for rho in sorted(list(set(rhos)))] for mu in sorted(list(set(mus)))],
+            x=sorted(list(set(rhos))),
+            y=sorted(list(set(mus))),
         ),
-        row=4,
+        row=7,
         col=1,
     )
     fig.add_trace(
-        go.Scatter(
-            x=aspirations, y=mean_rewards + std_rewards, mode="lines", showlegend=False, line=dict(color="rgba(0,0,0,0)")
+        go.Heatmap(
+            z=[[max_std_dev[(rho, mu)] for rho in sorted(list(set(rhos)))] for mu in sorted(list(set(mus)))],
+            x=sorted(list(set(rhos))),
+            y=sorted(list(set(mus))),
         ),
-        row=4,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=aspirations,
-            y=mean_rewards - std_rewards,
-            mode="lines",
-            fill="tonexty",
-            name="Reward Standard Deviation",
-            line=dict(color="rgba(0,0,0,0)"),
-            fillcolor="rgba(0,176,246,0.2)",
-        ),
-        row=4,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=aspirations, y=aspirations, mode="lines", line=dict(dash="dash", color="rgba(0,0,0,0.5)"), showlegend=False
-        ),
-        row=4,
+        row=8,
         col=1,
     )
 
     fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
+    fig.update_yaxes(title_text="Lambda", row=1, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=1, col=1)
+    fig.update_yaxes(title_text="Aspiration", row=2, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=2, col=1)
+    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
+    fig.update_xaxes(title_text="Environment steps", row=3, col=1)
     fig.update_xaxes(title_text="Aspiration", row=4, col=1)
     fig.update_yaxes(title_text="Mean reward", row=4, col=1)
-    fig.update_yaxes(title_text="Lambda", row=1, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=1, col=1)
-    fig.update_yaxes(title_text="Aspiration", row=2, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=2, col=1)
-    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=3, col=1)
-
-    fig.show(renderer="browser")
-    return fig
-
-
-def plot_ar_mu(env, models, n_eval_episodes: int = 500) -> Figure:
-    eval_env = Monitor(env)
-
-    # Create subplots
-    fig = make_subplots(
-        rows=4,
-        cols=1,
-        subplot_titles=(
-            "Mean Lambda for each step",
-            "Mean Aspiration Value for each step",
-            "Remaining reward",
-            "Mean Reward over 500 episodes",
-        ),
-    )
-
-    mean_rewards = []
-    std_rewards = []
-
-    # create a continuous colorscale with len(models) colors that goes from green to red
-    if len(models) > 1:
-        colorscale = [
-            f"rgb({int(255 * (1 - i / (len(models) - 1)))}, {int(255 * i / (len(models) - 1))}, 0)" for i in range(len(models))
-        ]
-    else:
-        colorscale = ["rgb(0, 255, 0)"]
-
-    for i in tqdm(range(len(models))):
-        model = models[i]
-        (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes)
-        mean_rewards.append(m)
-        std_rewards.append(std)
-
-        fig.add_trace(
-            go.Scatter(
-                y=infos["lambda"],
-                name=str(round(model.mu, 2)),
-                line=dict(
-                    color=colorscale[i],
-                ),
-                legendgroup=str(round(model.mu, 2)),
-            ),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            go.Scatter(
-                y=infos["aspiration"],
-                line=dict(
-                    color=colorscale[i],
-                ),
-                showlegend=False,
-                legendgroup=str(round(model.mu, 2)),
-            ),
-            row=2,
-            col=1,
-        )
-        fig.add_trace(
-            go.Scatter(
-                y=infos["reward left"],
-                line=dict(
-                    color=colorscale[i],
-                ),
-                showlegend=False,
-                legendgroup=str(round(model.mu, 2)),
-            ),
-            row=3,
-            col=1,
-        )
-
-    mus = list(map(lambda m: m.mu, models))
-    mean_rewards = np.array(mean_rewards)
-    std_rewards = np.array(std_rewards)
-
-    fig.add_trace(
-        go.Scatter(
-            x=mus,
-            y=mean_rewards,
-            name="Mean reward over 500 episodes",
-            line=dict(
-                color="rgb(0,176,246)",
-            ),
-        ),
-        row=4,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(x=mus, y=mean_rewards + std_rewards, mode="lines", showlegend=False, line=dict(color="rgba(0,0,0,0)")),
-        row=4,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=mus,
-            y=mean_rewards - std_rewards,
-            mode="lines",
-            fill="tonexty",
-            name="Reward Standard Deviation",
-            line=dict(color="rgba(0,0,0,0)"),
-            fillcolor="rgba(0,176,246,0.2)",
-        ),
-        row=4,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(x=mus, y=mus, mode="lines", line=dict(dash="dash", color="rgba(0,0,0,0.5)"), showlegend=False),
-        row=4,
-        col=1,
-    )
-
-    fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
-    fig.update_xaxes(title_text="Mu", row=4, col=1)
-    fig.update_yaxes(title_text="Mean reward", row=4, col=1)
-    fig.update_yaxes(title_text="Lambda", row=1, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=1, col=1)
-    fig.update_yaxes(title_text="Aspiration", row=2, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=2, col=1)
-    fig.update_yaxes(title_text="Remaining return to go", row=3, col=1)
-    fig.update_xaxes(title_text="Environment steps", row=3, col=1)
+    fig.update_xaxes(title_text="Rho", row=5, col=1)
+    fig.update_yaxes(title_text="Mean reward", row=5, col=1)
+    fig.update_xaxes(title_text="Mu", row=6, col=1)
+    fig.update_yaxes(title_text="Mean reward", row=6, col=1)
+    fig.update_xaxes(title_text="Rho", row=7, col=1)
+    fig.update_yaxes(title_text="Mu", row=7, col=1)
+    fig.update_xaxes(title_text="Rho", row=8, col=1)
+    fig.update_yaxes(title_text="Mu", row=8, col=1)
 
     return fig
 
@@ -475,7 +412,8 @@ def evaluate_hard_policy(
         Returns ([float], [int]) when ``return_episode_rewards`` is True, first
         list containing per-episode rewards and second containing per-episode lengths
         (in number of steps).
-         # todo: doc
+        # todo remove
+         # todo: doc (same as evaluate_policy but with aspiration-= reward /= gamma
     """
     is_monitor_wrapped = False
     # Avoid circular import
@@ -524,6 +462,7 @@ def evaluate_hard_policy(
         )
         new_observations, rewards, dones, infos = env.step(actions)
         model.policy.aspiration -= rewards
+        model.policy.aspiration /= model.policy.gamma
         # model.rescale_aspiration(observations, actions, new_observations, use_q_target=False)
         # logs
         new_aspiration = deepcopy(model.policy.aspiration)

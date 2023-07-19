@@ -13,3 +13,4 @@ tqdm
 ray
 plotly
 pycolab
+numpy==1.24.3 # for pycolab higher versions are not supported
