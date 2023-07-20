@@ -9,7 +9,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.preprocessing import get_flattened_obs_dim
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from sb3_contrib import QRDQN, TQC, ArDQN, MaskablePPO
+from sb3_contrib import ARDQN, QRDQN, TQC, MaskablePPO
 from sb3_contrib.common.envs import InvalidActionEnvDiscrete
 from sb3_contrib.common.maskable.utils import get_action_masks
 
@@ -61,7 +61,7 @@ def clone_qrdqn_batch_norm_stats(model: QRDQN) -> (th.Tensor, th.Tensor, th.Tens
     return quantile_net_bias, quantile_net_running_mean, quantile_net_target_bias, quantile_net_target_running_mean
 
 
-def clone_ar_ddqn_batch_norm_stats(model: ArDQN) -> List[th.Tensor]:
+def clone_ar_ddqn_batch_norm_stats(model: ARDQN) -> List[th.Tensor]:
     """
     Clone the bias and running mean from the quantile network and quantile-target network.
     :param model:
@@ -108,7 +108,7 @@ CLONE_HELPERS = {
     QRDQN: clone_qrdqn_batch_norm_stats,
     TQC: clone_tqc_batch_norm_stats,
     MaskablePPO: clone_on_policy_batch_norm,
-    ArDQN: clone_ar_ddqn_batch_norm_stats,
+    ARDQN: clone_ar_ddqn_batch_norm_stats,
 }
 
 
@@ -230,9 +230,10 @@ def test_tqc_train_with_batch_norm():
 
 
 # @pytest.mark.parametrize("model_class", [QRDQN, TQC, ArDQN])
-@pytest.mark.parametrize("model_class", [ArDQN])
-def test_offpolicy_collect_rollout_batch_norm(model_class):
-    if model_class in [QRDQN, ArDQN]:
+@pytest.mark.parametrize("model_class", [ARDQN])
+@pytest.mark.parametrize("ardqn_share", ["all", "none", "features_extractor"])
+def test_offpolicy_collect_rollout_batch_norm(model_class, ardqn_share):
+    if model_class in [QRDQN, ARDQN]:
         env_id = "CartPole-v1"
     else:
         env_id = "Pendulum-v1"
@@ -240,6 +241,13 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
     clone_helper = CLONE_HELPERS[model_class]
     policy_kwargs = dict(net_arch=[16, 16], features_extractor_class=FlattenBatchNormDropoutExtractor)
     learning_starts = 10
+    kwargs = {}
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
+        policy_kwargs["shared_network"] = ardqn_share
+    elif ardqn_share != "all":
+        pytest.skip()
+
     model = model_class(
         "MlpPolicy",
         env_id,
@@ -248,6 +256,7 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
         seed=1,
         gradient_steps=0,
         train_freq=1,
+        **kwargs,
     )
 
     batch_norm_stats_before = clone_helper(model)
@@ -267,7 +276,7 @@ def test_predict_with_dropout_batch_norm(model_class, env_id):
     if env_id == "CartPole-v1":
         if model_class in [TQC]:
             return
-    elif model_class in [QRDQN, ArDQN]:
+    elif model_class in [QRDQN, ARDQN]:
         return
 
     model_kwargs = dict(seed=1)
@@ -276,7 +285,7 @@ def test_predict_with_dropout_batch_norm(model_class, env_id):
         features_extractor_class=FlattenBatchNormDropoutExtractor,
         net_arch=[16, 16],
     )
-    if model_class in [QRDQN, TQC, ArDQN]:
+    if model_class in [QRDQN, TQC, ARDQN]:
         model_kwargs["learning_starts"] = 0
     else:
         model_kwargs["n_steps"] = 64
@@ -302,13 +311,12 @@ def test_predict_with_dropout_batch_norm(model_class, env_id):
 @pytest.mark.parametrize("env_id", ["CartPole-v1"])
 def test_ardqn_predict_with_dropout_batch_norm(env_id):
     model_kwargs = dict(seed=1, learning_starts=0)
-    clone_helper = CLONE_HELPERS[ArDQN]
+    clone_helper = CLONE_HELPERS[ARDQN]
     policy_kwargs = dict(
         features_extractor_class=FlattenBatchNormDropoutExtractor,
         net_arch=[16, 16],
-        initial_aspiration=50.0,
     )
-    model = ArDQN("MlpPolicy", env_id, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
+    model = ARDQN("MlpPolicy", env_id, initial_aspiration=10.0, policy_kwargs=policy_kwargs, verbose=1, **model_kwargs)
 
     batch_norm_stats_before = clone_helper(model)
 

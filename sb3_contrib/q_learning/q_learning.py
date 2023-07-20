@@ -32,7 +32,7 @@ class QLearning(BaseAlgorithm):
         self,
         env: Union[GymEnv, str, None],
         policy: Union[str, Type[QLearningPolicy]] = "QLearningPolicy",
-        learning_rate: Union[float, Schedule] = 0.5,
+        learning_rate: Union[float, Schedule] = 0.1,
         gamma: float = 0.99,
         exploration_fraction: float = 0.1,
         exploration_initial_eps: float = 1.0,
@@ -41,7 +41,7 @@ class QLearning(BaseAlgorithm):
         stats_window_size: int = 100,
         tensorboard_log: Optional[str] = None,
         verbose: int = 0,
-        device: Union[th.device, str] = "auto",
+        device: Union[th.device, str] = "cpu",
         seed: Optional[int] = None,
         _init_setup_model: bool = True,
     ) -> None:
@@ -138,15 +138,15 @@ class QLearning(BaseAlgorithm):
         num_collected_steps, num_collected_episodes = 0, 0
         last_log_time = 0
         while self.num_timesteps < total_timesteps:
+            num_collected_steps += 1
             self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
             learning_rate = self.lr_schedule(self._current_progress_remaining)
-
             action = self.predict(obs)[0]
             new_obs, rewards, dones, infos = self.env.step(action)
             self._on_step()
             self._update_info_buffer(infos, dones)
             self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
-            num_collected_steps += dones.sum()
+            num_collected_episodes += dones.sum()
             self._episode_num += dones.sum()
             if log_interval is not None and self._episode_num - last_log_time >= log_interval:
                 self._dump_logs()

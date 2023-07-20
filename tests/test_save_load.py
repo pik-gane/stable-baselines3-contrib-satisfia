@@ -12,17 +12,17 @@ from stable_baselines3.common.envs import FakeImageEnv, IdentityEnv, IdentityEnv
 from stable_baselines3.common.utils import get_device
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from sb3_contrib import ARS, QRDQN, TQC, TRPO, ArDQN
+from sb3_contrib import ARDQN, ARS, QRDQN, TQC, TRPO
 
-# MODEL_LIST = [ARS, QRDQN, TQC, TRPO, ArDQN]
-MODEL_LIST = [ArDQN]
+# MODEL_LIST = [ARS, QRDQN, TQC, TRPO, ARDQN]
+MODEL_LIST = [ARDQN]
 
 
 def select_env(model_class: BaseAlgorithm) -> gym.Env:
     """
     Selects an environment with the correct action space as QRDQN and ArDQN only supports discrete action space
     """
-    if model_class in {QRDQN, ArDQN}:
+    if model_class in {QRDQN, ARDQN}:
         return IdentityEnv(10)
     else:
         return IdentityEnvBox(-10, 10)
@@ -42,12 +42,14 @@ def test_save_load(tmp_path, model_class):
     env = DummyVecEnv([lambda: select_env(model_class)])
 
     policy_kwargs = dict(net_arch=[16])
-
+    kwargs = dict(policy_kwargs=policy_kwargs)
     if model_class in {QRDQN, TQC}:
         policy_kwargs.update(dict(n_quantiles=20))
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
 
     # create model
-    model = model_class("MlpPolicy", env, verbose=1, policy_kwargs=policy_kwargs)
+    model = model_class("MlpPolicy", env, verbose=1, **kwargs)
     model.learn(total_timesteps=300)
 
     env.reset()
@@ -181,9 +183,10 @@ def test_set_env(model_class):
     if model_class in {TQC, QRDQN}:
         kwargs.update(dict(learning_starts=100))
         kwargs["policy_kwargs"].update(dict(n_quantiles=20))
-    if model_class in {ArDQN}:
+    if model_class in {ARDQN}:
         kwargs.update(dict(learning_starts=100))
-
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
     # create model
     model = model_class("MlpPolicy", env, **kwargs)
     # learn
@@ -208,9 +211,11 @@ def test_exclude_include_saved_params(tmp_path, model_class):
     :param model_class: (BaseAlgorithm) A RL model
     """
     env = DummyVecEnv([lambda: select_env(model_class)])
-
+    kwargs = {}
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
     # create model, set verbose as 2, which is not standard
-    model = model_class("MlpPolicy", env, policy_kwargs=dict(net_arch=[16]), verbose=2)
+    model = model_class("MlpPolicy", env, policy_kwargs=dict(net_arch=[16]), verbose=2, **kwargs)
 
     # Check if exclude works
     model.save(tmp_path / "test_save", exclude=["verbose"])
@@ -276,7 +281,7 @@ def test_save_load_policy(tmp_path, model_class, policy_str):
     if policy_str == "MlpPolicy":
         env = select_env(model_class)
     else:
-        if model_class in [TQC, QRDQN, ArDQN]:
+        if model_class in [TQC, QRDQN, ARDQN]:
             # Avoid memory error when using replay buffer
             # Reduce the size of the features
             kwargs = dict(
@@ -289,11 +294,13 @@ def test_save_load_policy(tmp_path, model_class, policy_str):
                 n_steps=128,
                 policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32)),
             )
-        env = FakeImageEnv(screen_height=40, screen_width=40, n_channels=2, discrete=(model_class in {QRDQN, ArDQN}))
+        env = FakeImageEnv(screen_height=40, screen_width=40, n_channels=2, discrete=(model_class in {QRDQN, ARDQN}))
 
     # Reduce number of quantiles for faster tests
     if model_class in [TQC, QRDQN]:
         kwargs["policy_kwargs"].update(dict(n_quantiles=20))
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
 
     env = DummyVecEnv([lambda: env])
 
@@ -326,7 +333,7 @@ def test_save_load_policy(tmp_path, model_class, policy_str):
         assert not th.allclose(params[k], new_params[k]), "Parameters did not change as expected."
 
     params = new_params
-    if model_class in {ArDQN}:
+    if model_class in {ARDQN}:
         # Reset aspiration to eval the policy
         policy.reset_aspiration()
     # get selected actions

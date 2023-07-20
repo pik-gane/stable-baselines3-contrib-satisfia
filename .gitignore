@@ -31,7 +31,7 @@ keys/
 
 .idea
 
-logs/
+experiments/logs/
 
 .ipynb_checkpoints
 ghostdriver.log
@@ -45,5 +45,7 @@ src
 .cache
 *.lprof
 *.prof
+
+logs/
 
 MUJOCO_LOG.TXT

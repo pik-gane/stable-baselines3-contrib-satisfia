@@ -1,9 +1,12 @@
 import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+
+from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
+
 try:
     from typing import Literal
-except ImportError:   # Python <3.8 support:
+except ImportError:  # Python <3.8 support:
     from typing_extensions import Literal
 
 import numpy as np
@@ -13,20 +16,20 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import should_collect_more_steps
+from stable_baselines3.common.utils import get_parameters_by_name, polyak_update, should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
-from sb3_contrib.common.satisficing.utils import interpolate, ratio
 from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
+from sb3_contrib.common.satisficing.utils import interpolate, ratio
 
 SelfArDQN = TypeVar("SelfArDQN", bound="ArDQN")
 
 
-class ArDQN(DQN):
+class ARDQN(ARQAlgorithm, DQN):
     """
     Deep Q-Network (DQN) with aspiration rescaling (AR)
 
@@ -44,7 +47,7 @@ class ArDQN(DQN):
     :param mu: the aspiration smoothing coefficient (between 0 and 1) default 0 for no smoothing for lambda
     :param tau: the soft update coefficient ("Polyak update", between 0 and 1) default 1 for hard update
     :param gamma: the discount factor
-    :param loss:
+    :param loss: The loss function to use (MSELoss or SmoothL1Loss)
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -89,13 +92,15 @@ class ArDQN(DQN):
         self,
         policy: Union[str, Type[ArDQNPolicy]],
         env: Union[GymEnv, str],
+        initial_aspiration: float = None,
         learning_rate: Union[float, Schedule] = 1e-4,
         buffer_size: int = 1_000_000,  # 1e6
         learning_starts: int = 1000,
         batch_size: int = 32,
-        mu: float = 0.0,
+        mu: float = 0.5,
         tau: float = 1.0,
         gamma: float = 0.99,
+        rho: float = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "MSE",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
@@ -114,27 +119,23 @@ class ArDQN(DQN):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ) -> None:
-        if not ((type(policy) != str) or (policy_kwargs is not None and "initial_aspiration" in policy_kwargs.keys())):
-            warnings.warn(
-                "ArDQN requires a value for initial_aspiration in policy_kwargs\nIf this is not a test, consider setting this parameter",
-                UserWarning,
-            )
-            if policy_kwargs is None:
-                policy_kwargs = {}
-            policy_kwargs["initial_aspiration"] = 10.0
-
+        if initial_aspiration is None and isinstance(policy, str):
+            raise ValueError("You must specify an initial aspiration for AR DQN")
+        # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
         super().__init__(
+            initial_aspiration,
             policy,
             env,
-            learning_rate,
-            buffer_size,
-            learning_starts,
-            batch_size,
-            tau,
-            gamma,
-            train_freq,
-            gradient_steps,
-            replay_buffer_class=SatisficingReplayBuffer,  # We need dict because we want to store lambdas
+            learning_rate=learning_rate,
+            buffer_size=buffer_size,
+            learning_starts=learning_starts,
+            batch_size=batch_size,
+            tau=tau,
+            train_freq=train_freq,
+            gradient_steps=gradient_steps,
+            gamma=gamma,
+            rho=rho,
+            replay_buffer_class=SatisficingReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
             target_update_interval=target_update_interval,
@@ -151,87 +152,70 @@ class ArDQN(DQN):
             _init_setup_model=_init_setup_model,
         )
         self.mu = mu
-        self.test_env = deepcopy(self.env)
         self.loss = self.loss_aliases[loss]()
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
-        self.delta_qmax_net = self.policy.delta_qmax_net
         self.delta_qmin_net = self.policy.delta_qmin_net
+        self.delta_qmin_net_target = self.policy.delta_qmin_net_target
+        self.delta_qmax_net = self.policy.delta_qmax_net
+        self.delta_qmax_net_target = self.policy.delta_qmax_net_target
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
         # Update learning rate according to schedule
         self._update_learning_rate(self.policy.optimizer)
-
-        q_losses = []
-        qmax_losses = []
-        qmin_losses = []
         for _ in range(gradient_steps):
             # Sample replay buffer
             replay_data: SatisficingReplayBufferSamples = self.replay_buffer.sample(
                 batch_size, env=self._vec_normalize_env
             )  # type: ignore[union-attr]
-
-            with th.no_grad():
-                next_q_values = self.q_net_target(replay_data.next_observations)
-                smooth_lambda = interpolate(replay_data.next_lambda, self.mu, replay_data.lambda_).unsqueeze(1)
-                v_min = next_q_values.min(dim=1).values.unsqueeze(1)
-                v_max = next_q_values.max(dim=1).values.unsqueeze(1)
-                v = interpolate(v_min, smooth_lambda, v_max)
-                target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * v
-                target_delta_min = self.gamma * (v - v_min)
-                target_delta_max = self.gamma * (v_max - v)
-
-            obs = replay_data.observations
-            # Get current Q-values estimates
-            current_q_values = self.q_net(obs)
-            current_delta_min, current_delta_max = self.delta_qmin_net(obs), self.delta_qmax_net(obs)
-
-            index = replay_data.actions.long()
-            # Retrieve the q-values for the actions from the replay buffer
-            current_q_values = th.gather(current_q_values, dim=1, index=index)
-            current_delta_min = th.gather(current_delta_min, dim=1, index=index)
-            current_delta_max = th.gather(current_delta_max, dim=1, index=index)
-
-            # Compute Huber loss (less sensitive to outliers)
-            q_loss = self.loss(current_q_values, target_q_values)
-            qmin_loss = self.loss(current_delta_min, target_delta_min)
-            qmax_loss = self.loss(current_delta_max, target_delta_max)
-
-            # Logs
-            q_losses.append(q_loss.item())
-            qmax_losses.append(qmax_loss.item())
-            qmin_losses.append(qmin_loss.item())
-
-            # Optimize the policy
-            self.policy.optimizer.zero_grad()
-            # Backward all losses
-            (q_loss + qmin_loss + qmax_loss).backward()
-            # Clip gradient norm
-            th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            self.policy.optimizer.step()
+            smooth_lambda = interpolate(replay_data.next_lambda, self.mu, replay_data.lambda_)
+            smooth_lambda[replay_data.dones.bool()] = replay_data.next_lambda[replay_data.dones.bool()]
+            # _learning_step(self, obs, actions, rewards, new_obs, dones, smooth_lambdas, learning_rate) -> None:
+            self._learning_step(
+                replay_data.observations,
+                replay_data.actions,
+                replay_data.rewards,
+                replay_data.next_observations,
+                replay_data.dones,
+                smooth_lambda,
+            )
 
         # Increase update counter
         self._n_updates += gradient_steps
-        if self.test_env is None:
-            self.test_env = deepcopy(self.env)
-        with th.no_grad():
-            reset_obs, _ = self.policy.obs_to_tensor(self.test_env.reset())
-            q = self.q_net(reset_obs)
-            self.logger.record_mean("policy/Q_max_mean", float(q.max()))
-            self.logger.record_mean("policy/Q_min_mean", float(q.min()))
-            self.logger.record_mean("policy/Q_median_mean", float(q.quantile(q=0.5)))
-            self.logger.record_mean("policy/Q_opt_mean", float((q + self.delta_qmax_net(reset_obs)).max()))
-            self.logger.record_mean("policy/Q_unopt_mean", float((q - self.delta_qmin_net(reset_obs)).min()))
+
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
-        self.logger.record_mean("train/mean_q_loss", np.mean(q_losses))
-        self.logger.record_mean("train/mean_qmax_loss", np.mean(qmax_losses))
-        self.logger.record_mean("train/mean_qmin_loss", np.mean(qmin_losses))
-        self.logger.record("train/q_loss", np.mean(q_losses))
-        self.logger.record("train/qmax_loss", np.mean(qmax_losses))
-        self.logger.record("train/qmin_loss", np.mean(qmin_losses))
+
+    def _update_predictors(
+        self,
+        obs: th.Tensor,
+        actions: th.Tensor,
+        q_target: th.Tensor,
+        delta_qmin_target: th.Tensor,
+        delta_qmax_target: th.Tensor,
+    ):
+        current_q_values = self.q_net(obs)
+        current_delta_min, current_delta_max = self.delta_qmin_net(obs), self.delta_qmax_net(obs)
+
+        # Retrieve the q-values for the actions from the replay buffer
+        current_q_values = th.gather(current_q_values, dim=1, index=actions)
+        current_delta_min = th.gather(current_delta_min, dim=1, index=actions)
+        current_delta_max = th.gather(current_delta_max, dim=1, index=actions)
+
+        # Compute Huber loss (less sensitive to outliers)
+        q_loss = self.loss(current_q_values, q_target)
+        qmin_loss = self.loss(current_delta_min, delta_qmin_target)
+        qmax_loss = self.loss(current_delta_max, delta_qmax_target)
+
+        # Optimize the policy
+        self.policy.optimizer.zero_grad()
+        # Backward all losses
+        (q_loss + qmin_loss + qmax_loss).backward()
+        # Clip gradient norm
+        th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+        self.policy.optimizer.step()
 
     def learn(
         self: SelfArDQN,
@@ -242,6 +226,7 @@ class ArDQN(DQN):
         reset_num_timesteps: bool = True,
         progress_bar: bool = False,
     ) -> SelfArDQN:
+        # noinspection PyTypeChecker
         return super().learn(
             total_timesteps=total_timesteps,
             callback=callback,
@@ -250,32 +235,6 @@ class ArDQN(DQN):
             reset_num_timesteps=reset_num_timesteps,
             progress_bar=progress_bar,
         )
-
-    def rescale_aspiration(self, obs_t: np.ndarray, a_t: np.ndarray, obs_t1: np.ndarray) -> None:
-        """
-        Rescale the aspiration so that, **in expectation**, the agent will
-        get the target aspiration.
-
-        :param obs_t: observation at time t
-        :param a_t: action at time t
-        :param obs_t1: observation at time t+1
-        """
-        self.policy.rescale_aspiration(self.policy.obs_to_tensor(obs_t)[0], a_t, self.policy.obs_to_tensor(obs_t1)[0])
-
-    def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
-        """
-        Reset the current aspiration to the initial one
-
-        :param dones: if not None, reset only the aspiration that correspond to the done environments
-        """
-        self.policy.reset_aspiration(dones)
-
-    def switch_to_eval(self) -> None:
-        """
-        Prepare the model to be evaluated
-        """
-        self.exploration_rate = 0.0
-        self.reset_aspiration()
 
     def collect_rollouts(
         self,
@@ -299,36 +258,31 @@ class ArDQN(DQN):
         if env.num_envs > 1:
             assert train_freq.unit == TrainFrequencyUnit.STEP, "You must use only one env when doing episodic training."
 
-        # Vectorize action noise if needed
-        if action_noise is not None and env.num_envs > 1 and not isinstance(action_noise, VectorizedActionNoise):
-            action_noise = VectorizedActionNoise(action_noise, env.num_envs)
-
-        if self.use_sde:
-            self.actor.reset_noise(env.num_envs)
-
         callback.on_rollout_start()
         continue_training = True
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
-                # Sample a new noise matrix
-                self.actor.reset_noise(env.num_envs)
-
+            if self.num_timesteps < learning_starts:
+                self.exploration_rate = 1.0
             # Select action randomly or according to policy
-            actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
+            actions, _ = self.predict(self._last_obs)
 
-            # Rescale and perform action
+            # Perform action
             new_obs, rewards, dones, infos = env.step(actions)
-
             # Rescale aspiration
             with th.no_grad():
-                new_obs_th, _ = self.policy.obs_to_tensor(new_obs)
                 # will update self.policy.aspiration
-                self.policy.rescale_aspiration(self.policy.obs_to_tensor(self._last_obs)[0], buffer_actions, new_obs_th)
-                new_qs = self.q_net(new_obs_th).cpu().numpy()
-            self.reset_aspiration(dones)
-            new_lambda = ratio(new_qs.min(axis=1), self.policy.aspiration, new_qs.max(axis=1))
-            self.logger.record_mean("rollout/lambda_mean", new_lambda.mean())
-            self.logger.record_mean("rollout/aspiration_mean", self.policy.aspiration.mean())
+                aspiration_diff = aspiration_diff = (self.policy.aspiration - np.take_along_axis(
+                    self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                ).squeeze(1)).mean()
+                self.rescale_aspiration(
+                    self._last_obs,
+                    actions,
+                    rewards,
+                    new_obs,
+                )
+                self.reset_aspiration(dones)
+                new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(0, 1).cpu().numpy()
+                self._log_policy(new_obs, new_lambda, aspiration_diff)
             self.num_timesteps += env.num_envs
             num_collected_steps += 1
 
@@ -342,7 +296,7 @@ class ArDQN(DQN):
             self._update_info_buffer(infos, dones)
 
             # Store data in replay buffer (normalized action and unnormalized observation)
-            self._store_ar_transition(replay_buffer, buffer_actions, new_obs, new_lambda, rewards, dones, infos)
+            self._store_ar_transition(replay_buffer, actions, new_obs, new_lambda, rewards, dones, infos)
 
             self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
 
@@ -357,11 +311,6 @@ class ArDQN(DQN):
                     # Update stats
                     num_collected_episodes += 1
                     self._episode_num += 1
-
-                    if action_noise is not None:
-                        kwargs = dict(indices=[idx]) if env.num_envs > 1 else {}
-                        action_noise.reset(**kwargs)
-
                     # Log training infos
                     if log_interval is not None and self._episode_num % log_interval == 0:
                         self._dump_logs()
@@ -422,7 +371,6 @@ class ArDQN(DQN):
                     # VecNormalize normalizes the terminal observation
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
-        # Todo: Do we need to do something for lambda in case of done ?
 
         replay_buffer.add_with_lambda(
             self._last_original_obs,
@@ -445,6 +393,8 @@ class ArDQN(DQN):
             *super()._excluded_save_params(),
             "delta_qmin_net",
             "delta_qmax_net",
+            "delta_qmin_net_target",
+            "delta_qmax_net_target",
         ]
 
     def _setup_learn(
@@ -463,11 +413,35 @@ class ArDQN(DQN):
             self.policy.set_training_mode(False)
             # Initialize the lambda value
             with th.no_grad():
-                q = self.q_net(th.tensor(self._last_obs, device=self.device)).cpu().numpy()
-            self._last_lambda = ratio(q.min(axis=1), self.policy.initial_aspiration, q.max(axis=1))
+                self._last_lambda = (
+                    self.policy.lambda_ratio(self._last_obs, self.policy.initial_aspiration).clamp(0, 1).cpu().numpy()
+                )
             self.reset_aspiration()
             self.policy.set_training_mode(training_mode)
         return r
+
+    def _on_step(self) -> None:
+        """
+        Update the exploration rate and target network if needed.
+        This method is called in ``collect_rollouts()`` after each step in the environment.
+        """
+        self._n_calls += 1
+        # Account for multiple environments
+        # each call to step() corresponds to n_envs transitions
+        if self._n_calls % max(self.target_update_interval // self.n_envs, 1) == 0:
+            self.policy.update_target_nets(self.tau)
+            # Copy running stats, see GH issue #996
+            polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+        self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+        self.logger.record("rollout/exploration_rate", self.exploration_rate)
+
+    def _setup_model(self) -> None:
+        super()._setup_model()
+        # Copy running stats for delta networks, see GH issue #996
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:
         """
@@ -477,19 +451,13 @@ class ArDQN(DQN):
         :param env: The environment for learning a policy
         :param force_reset: Ignored, the function will always make is if this is True
         """
+        if not force_reset:
+            warnings.warn(
+                UserWarning(
+                    "force_reset is ignored in AR DQN. The environment will always be reset to avoid "
+                    "weird aspirations setups"
+                )
+            )
         super().set_env(env, True)
         # Update the aspiration shape according to the env
         self.policy.reset_aspiration()
-
-    def predict(
-        self,
-        observation: Union[np.ndarray, Dict[str, np.ndarray]],
-        state: Optional[Tuple[np.ndarray, ...]] = None,
-        episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
-    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
-        """
-        To make a prediction using the AR DQN, set deterministic=False and exploration_rate=0.
-        The version with deterministic=True is exposed only for testing purposes
-        """
-        return super().predict(observation, state, episode_start, deterministic)
