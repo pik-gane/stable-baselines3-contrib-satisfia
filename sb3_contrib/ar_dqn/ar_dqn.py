@@ -271,9 +271,9 @@ class ARDQN(ARQAlgorithm, DQN):
             # Rescale aspiration
             with th.no_grad():
                 # will update self.policy.aspiration
-                aspiration_diff = aspiration_diff = self.policy.aspiration - np.take_along_axis(
+                aspiration_diff = aspiration_diff = (self.policy.aspiration - np.take_along_axis(
                     self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
-                ).squeeze(1)
+                ).squeeze(1)).mean()
                 self.rescale_aspiration(
                     self._last_obs,
                     actions,
@@ -393,6 +393,8 @@ class ARDQN(ARQAlgorithm, DQN):
             *super()._excluded_save_params(),
             "delta_qmin_net",
             "delta_qmax_net",
+            "delta_qmin_net_target",
+            "delta_qmax_net_target",
         ]
 
     def _setup_learn(
@@ -419,10 +421,19 @@ class ARDQN(ARQAlgorithm, DQN):
         return r
 
     def _on_step(self) -> None:
-        super()._on_step()
+        """
+        Update the exploration rate and target network if needed.
+        This method is called in ``collect_rollouts()`` after each step in the environment.
+        """
+        self._n_calls += 1
+        # Account for multiple environments
+        # each call to step() corresponds to n_envs transitions
         if self._n_calls % max(self.target_update_interval // self.n_envs, 1) == 0:
-            polyak_update(self.delta_qmin_net.parameters(), self.delta_qmin_net_target.parameters(), self.tau)
-            polyak_update(self.delta_qmax_net.parameters(), self.delta_qmax_net_target.parameters(), self.tau)
+            self.policy.update_target_nets(self.tau)
+            # Copy running stats, see GH issue #996
+            polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
+        self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+        self.logger.record("rollout/exploration_rate", self.exploration_rate)
 
     def _setup_model(self) -> None:
         super()._setup_model()

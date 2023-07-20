@@ -231,7 +231,8 @@ def test_tqc_train_with_batch_norm():
 
 # @pytest.mark.parametrize("model_class", [QRDQN, TQC, ArDQN])
 @pytest.mark.parametrize("model_class", [ARDQN])
-def test_offpolicy_collect_rollout_batch_norm(model_class):
+@pytest.mark.parametrize("ardqn_share", ["all", "none", "features_extractor"])
+def test_offpolicy_collect_rollout_batch_norm(model_class, ardqn_share):
     if model_class in [QRDQN, ARDQN]:
         env_id = "CartPole-v1"
     else:
@@ -243,6 +244,10 @@ def test_offpolicy_collect_rollout_batch_norm(model_class):
     kwargs = {}
     if model_class in {ARDQN}:
         kwargs["initial_aspiration"] = 0.0
+        policy_kwargs["shared_network"] = ardqn_share
+    elif ardqn_share != "all":
+        pytest.skip()
+
     model = model_class(
         "MlpPolicy",
         env_id,

@@ -151,9 +151,9 @@ class BoatRaceGymEnv(gym.Env):
 
 
 def make_multi_armed_env():
-    values = np.array([0, 1, 2, 10]) / 10
-    variances = np.array([1, 1, 1, 1]) / 10
     nb_step = 20
+    values = np.array([0, 1, 2, 5]) / nb_step
+    variances = np.array([1, 1, 1, 1]) / nb_step
     obs_type: Literal["step_count", "one_hot", "state"] = "step_count"
     env = MultiarmedBanditsEnv(values, variances, nb_step, obs_type=obs_type)
     return env
@@ -189,7 +189,7 @@ ENV_DICT = {
 }
 
 DEFAULT_ASPIRATIONS = {
-    MULTI_ARMED_BANDITS: lambda n: np.linspace(0, 2, num=n),
+    MULTI_ARMED_BANDITS: lambda n: np.linspace(0, 5, num=n),
     BOAT_RACE: lambda n: np.linspace(-50, 50, num=n),
     EMPTY_GRID: lambda n: np.linspace(0, 1, num=n),
     PRISONERS: lambda n: np.linspace(0, 5, num=n),

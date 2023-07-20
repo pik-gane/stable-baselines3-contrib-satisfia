@@ -43,12 +43,14 @@ class ARQPolicy(BasePolicy):
         delta_qmax_predictor: BaseModel,
         delta_qmax_target_predictor: BaseModel,
     ) -> None:
-        self.q_predictor = q_predictor
-        self.q_target_predictor = q_target_predictor
-        self.delta_qmin_predictor = delta_qmin_predictor
-        self.delta_qmin_target_predictor = delta_qmin_target_predictor
-        self.delta_qmax_predictor = delta_qmax_predictor
-        self.delta_qmax_target_predictor = delta_qmax_target_predictor
+        # We need to create aliases because the predictors are not available at init time
+        # They are stored as lambda functions to avoid self.q_predictor to be counted in policy.parameters()
+        self.q_predictor = lambda obs: q_predictor(obs)
+        self.q_target_predictor = lambda obs: q_target_predictor(obs)
+        self.delta_qmin_predictor = lambda obs: delta_qmin_predictor(obs)
+        self.delta_qmin_target_predictor = lambda obs: delta_qmin_target_predictor(obs)
+        self.delta_qmax_predictor = lambda obs: delta_qmax_predictor(obs)
+        self.delta_qmax_target_predictor = lambda obs: delta_qmax_target_predictor(obs)
 
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values_batch = self.q_predictor(obs)

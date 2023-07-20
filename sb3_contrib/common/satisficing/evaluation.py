@@ -185,7 +185,7 @@ def evaluate_policy(
 
 def plot_ar(
     models: List[ARQAlgorithm],
-    results: Optional[List[Tuple[float, float, Dict[str, np.ndarray]]]] = None,
+    results: Optional[List[Tuple[Tuple[float, float], Dict[str, np.ndarray]]]] = None,
     env: Optional[gym.Env] = None,
     n_eval_episodes: int = 100,
     **kwargs,
@@ -207,7 +207,7 @@ def plot_ar(
 
     # Create subplots
     fig = make_subplots(
-        rows=4,
+        rows=5,
         cols=2,
         subplot_titles=(
             "Mean Lambda for each step",
@@ -241,7 +241,7 @@ def plot_ar(
         if results is None:
             (m, std), infos = evaluate_policy(model, eval_env, n_eval_episodes=n_eval_episodes, **kwargs)
         else:
-            m, std, infos = results[i]
+            (m, std), infos = results[i]
         model.mean_reward = m
         model.std_reward = std
         model.i = i
@@ -338,13 +338,13 @@ def plot_ar(
         aspiration_partitions[(model.policy.rho, model.mu)].append(model)
     for (aspiration, mu), models in rho_partitions.items():
         rhos = list(map(lambda x: x.policy.rho, models))
-        plot_reward(rhos, models, f"Mu: {round(mu,2)}, Aspiration: {round(aspiration,2)}", 3, 1, colorscale[models[0].i])
+        plot_reward(rhos, models, f"Mu:{round(mu,2)},Aspiration:{round(aspiration,2)}, share:", 3, 1, colorscale[models[0].i])
     for (aspiration, rho), models in mu_partitions.items():
         mus = list(map(lambda x: x.mu, models))
-        plot_reward(mus, models, f"Rho: {round(rho,2)}, Aspiration: {round(aspiration,2)}", 3, 2, colorscale[models[0].i])
+        plot_reward(mus, models, f"Rho:{round(rho,2)},Aspiration:{round(aspiration,2)},share:", 3, 2, colorscale[models[0].i])
     for (rho, mu), models in aspiration_partitions.items():
         aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
-        plot_reward(aspirations, models, f"Rho:{round(rho,2)}, Mu:{round(mu,2)}", 2, 2, colorscale[models[0].i])
+        plot_reward(aspirations, models, f"Rho:{round(rho,2)},Mu:{round(mu,2)}, share:", 2, 2, colorscale[models[0].i])
     fig.add_trace(
         go.Scatter(
             x=sorted(list(set(aspirations_list))),
@@ -384,6 +384,26 @@ def plot_ar(
         row=4,
         col=2,
     )
+    if isinstance(models[0], ARDQN):
+        dev_per_share_mode = defaultdict(list)
+        for model in models:
+            dev_per_share_mode[model.policy.shared_network].append(model)
+        for share_mode, models in dev_per_share_mode.items():
+            dev_per_share_mode[share_mode] = np.sqrt(
+                np.square(
+                    np.array([m.mean_reward for m in models]) - np.array([m.policy.initial_aspiration for m in models])
+                ).mean()
+            )
+        fig.add_trace(
+            go.Bar(
+                x=list(dev_per_share_mode.keys()),
+                y=list(dev_per_share_mode.values()),
+                marker=dict(color="rgba(0,0,0,0.5)"),
+            ),
+            row=5,
+            col=1,
+        )
+
     # Set coloraxis orientation ro horizontal and put it at the bottom of the plot and change color to reds
     fig.update_layout(coloraxis_colorbar=dict(orientation="h", y=-0.05, yanchor="top"), coloraxis=dict(colorscale="reds"))
     fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
@@ -403,6 +423,8 @@ def plot_ar(
     fig.update_yaxes(title_text="Mu", row=4, col=1)
     fig.update_xaxes(title_text="Rho", row=4, col=2)
     fig.update_yaxes(title_text="Mu", row=4, col=2)
+    fig.update_xaxes(title_text="Shared network", row=5, col=1)
+    fig.update_yaxes(title_text="Mean std from aspiration", row=5, col=1)
 
     return fig
 

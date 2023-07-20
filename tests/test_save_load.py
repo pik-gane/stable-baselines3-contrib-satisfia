@@ -14,7 +14,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from sb3_contrib import ARDQN, ARS, QRDQN, TQC, TRPO
 
-# MODEL_LIST = [ARS, QRDQN, TQC, TRPO, ArDQN]
+# MODEL_LIST = [ARS, QRDQN, TQC, TRPO, ARDQN]
 MODEL_LIST = [ARDQN]
 
 

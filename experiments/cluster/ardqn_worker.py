@@ -9,7 +9,8 @@ import pickle
 from experiments.custom_envs import ENV_DICT
 
 from sb3_contrib import ARDQN
-from sb3_contrib.common.satisficing.evaluation import evaluate_policy
+from sb3_contrib.common.satisficing.evaluation import evaluate_policy as ar_evaluate_policy
+from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3 import DQN
 from experiments.utils import DQNCallback
 
@@ -23,6 +24,7 @@ if __name__ == "__main__":
     parser.add_argument("--rhos", nargs="+", type=float, default=[0.5])
     parser.add_argument("--mus", nargs="+", type=float, default=[0.5])
     parser.add_argument("--policies", nargs="+", type=str, default=["MlpPolicy"])
+    parser.add_argument("--shared_network", nargs="+", type=str, default=["none"])
     parser.add_argument("--task_id", type=int, default=None)
     parser.add_argument("--n_eval_episodes", type=int, default=100)
     args = parser.parse_args()
@@ -51,17 +53,20 @@ if __name__ == "__main__":
         finally:
             # Save model
             model.save(path.join(save_path, f"final_model"))
-            with open(path.join(save_path, "info.txt"), "a") as f:
+            with open(path.join(save_path, "info.txt"), "w") as f:
                 f.write(f"policy: {policy}\n")
                 f.write(f"learning_steps: {model.num_timesteps}\n")
+        # Evaluate model and save results in a text file
+        with open(path.join(log_path, "results.txt"), "w") as f:
+            f.write(f"reward: {evaluate_policy(model, env, n_eval_episodes=args.n_eval_episodes)}\n")
     else:
         aspiration = args.aspirations[task_id]
         rho = args.rhos[task_id]
         mu = args.mus[task_id]
         policy = args.policies[task_id]
-
+        shared_network = args.shared_network[task_id]
         # Create model
-        model = ARDQN(policy, env, aspiration, verbose=0, rho=rho, mu=mu)
+        model = ARDQN(policy, env, aspiration, verbose=0, rho=rho, mu=mu, policy_kwargs=dict(shared_network=shared_network))
         # Setup logger
         log_path = path.join(args.log_path, "ARDQN", name)
         tb_logger = configure(log_path, ["tensorboard"])
@@ -88,4 +93,4 @@ if __name__ == "__main__":
                 f.write(f"learning_steps: {model.num_timesteps}\n")
         # Evaluate model and save results in a pickle file
         with open(path.join(log_path, "results.pkl"), "wb") as f:
-            pickle.dump(evaluate_policy(model, env, n_eval_episodes=args.n_eval_episodes), f)
+            pickle.dump(ar_evaluate_policy(model, env, n_eval_episodes=args.n_eval_episodes), f)

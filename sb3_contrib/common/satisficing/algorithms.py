@@ -1,6 +1,6 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, Dict, Optional, Tuple, Type, Union, List
 
 import numpy as np
 import torch as th
@@ -206,3 +206,14 @@ class ARQAlgorithm(ABC):
         self.logger.record_mean("rollout/lambda_mean", float(new_lambda.mean()))
         self.logger.record_mean("rollout/aspiration_mean", float(self.policy.aspiration.mean()))
         self.logger.record_mean("policy/aspiration_diff_mean", float(aspiration_diff.mean()))
+
+    def _excluded_save_params(self) -> List[str]:
+        return [
+            *super()._excluded_save_params(),
+            "policy.q_predictor",
+            "policy.q_target_predictor",
+            "policy.delta_qmin_predictor",
+            "policy.delta_qmax_predictor",
+            "policy.delta_qmin_target_predictor",
+            "policy.delta_qmax_target_predictor",
+        ]
