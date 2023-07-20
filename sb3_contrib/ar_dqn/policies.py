@@ -151,6 +151,7 @@ class ArDQNPolicy(ARQPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        gamma: float = 0.99,
     ) -> None:
         super().__init__(
             observation_space,
@@ -284,6 +285,7 @@ class ArDQNPolicy(ARQPolicy):
             polyak_update(self.delta_qmin_net.q_net.parameters(), self.delta_qmin_net_target.q_net.parameters(), tau)
             # Update the features extractor separately to avoid updating it three times
             polyak_update(self.q_net.features_extractor.parameters(), self.q_net_target.features_extractor.parameters(), tau)
+
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         data = super()._get_constructor_parameters()

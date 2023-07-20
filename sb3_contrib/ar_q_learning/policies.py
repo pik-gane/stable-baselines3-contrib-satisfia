@@ -63,4 +63,5 @@ class ARQLearningPolicy(ARQPolicy):
             self.delta_qmin_table,
             self.delta_qmax_table,
             self.delta_qmax_table,
+
         )
