@@ -110,9 +110,9 @@ def evaluate_policy(
         new_observations, rewards, dones, infos = env.step(actions)
         model.rescale_aspiration(observations, actions, rewards, new_observations, use_q_target=False)
         # logs
-        new_aspiration = deepcopy(model.policy.aspiration).squeeze(1)
+        new_aspiration = deepcopy(model.policy.aspiration)
         with th.no_grad():
-            new_lambda = model.policy.lambda_ratio(new_observations, model.policy.aspiration).squeeze(1).cpu().numpy()
+            new_lambda = model.policy.lambda_ratio(new_observations, model.policy.aspiration).cpu().numpy()
         for i in range(n_envs):
             if not dones[i]:
                 current_lambdas[i].append(new_lambda[i])
@@ -188,6 +188,7 @@ def plot_ar(
     results: Optional[List[Tuple[Tuple[float, float], Dict[str, np.ndarray]]]] = None,
     env: Optional[gym.Env] = None,
     n_eval_episodes: int = 100,
+    exp_name: str = "",
     **kwargs,
 ) -> Figure:
     """
@@ -204,7 +205,7 @@ def plot_ar(
         eval_env = Monitor(env)
     else:
         assert results is not None, "Either env or results must be provided"
-
+    exp_name = f"{exp_name}: " if exp_name else ""
     # Create subplots
     fig = make_subplots(
         rows=5,
@@ -338,13 +339,13 @@ def plot_ar(
         aspiration_partitions[(model.policy.rho, model.mu)].append(model)
     for (aspiration, mu), models in rho_partitions.items():
         rhos = list(map(lambda x: x.policy.rho, models))
-        plot_reward(rhos, models, f"Mu:{round(mu,2)},Aspiration:{round(aspiration,2)}, share:", 3, 1, colorscale[models[0].i])
+        plot_reward(rhos, models, f"Mu:{round(mu,2)},Aspiration:{round(aspiration,2)}", 3, 1, colorscale[models[0].i])
     for (aspiration, rho), models in mu_partitions.items():
         mus = list(map(lambda x: x.mu, models))
-        plot_reward(mus, models, f"Rho:{round(rho,2)},Aspiration:{round(aspiration,2)},share:", 3, 2, colorscale[models[0].i])
+        plot_reward(mus, models, f"Rho:{round(rho,2)},Aspiration:{round(aspiration,2)}", 3, 2, colorscale[models[0].i])
     for (rho, mu), models in aspiration_partitions.items():
         aspirations = list(map(lambda x: x.policy.initial_aspiration, models))
-        plot_reward(aspirations, models, f"Rho:{round(rho,2)},Mu:{round(mu,2)}, share:", 2, 2, colorscale[models[0].i])
+        plot_reward(aspirations, models, f"Rho:{round(rho,2)},Mu:{round(mu,2)}", 2, 2, colorscale[models[0].i])
     fig.add_trace(
         go.Scatter(
             x=sorted(list(set(aspirations_list))),
@@ -366,7 +367,7 @@ def plot_ar(
         max_std_dev[(rho, mu)] = np.sqrt(np.square((mean_r - asps)).max())
     fig.add_trace(
         go.Heatmap(
-            z=[[std_dev[(rho, mu)] for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
+            z=[[std_dev.get(rho, mu) for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
             x=sorted(list(set(rho_list))),
             y=sorted(list(set(mu_list))),
             coloraxis="coloraxis",
@@ -376,7 +377,7 @@ def plot_ar(
     )
     fig.add_trace(
         go.Heatmap(
-            z=[[max_std_dev[(rho, mu)] for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
+            z=[[max_std_dev.get(rho, mu) for rho in sorted(list(set(rho_list)))] for mu in sorted(list(set(mu_list)))],
             x=sorted(list(set(rho_list))),
             y=sorted(list(set(mu_list))),
             coloraxis="coloraxis",
@@ -406,7 +407,7 @@ def plot_ar(
 
     # Set coloraxis orientation ro horizontal and put it at the bottom of the plot and change color to reds
     fig.update_layout(coloraxis_colorbar=dict(orientation="h", y=-0.05, yanchor="top"), coloraxis=dict(colorscale="reds"))
-    fig.update_layout(title_text=f"AR Plots for {n_eval_episodes} episodes")
+    fig.update_layout(title_text=f"{exp_name}AR Plots for {n_eval_episodes} episodes")
     fig.update_yaxes(title_text="Lambda", row=1, col=1)
     fig.update_xaxes(title_text="Environment steps", row=1, col=1)
     fig.update_yaxes(title_text="Aspiration", row=1, col=2)

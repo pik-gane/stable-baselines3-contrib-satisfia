@@ -54,7 +54,7 @@ class HydraNetwork(QNetwork):
         :param obs: Observation
         :return: A list of tensors containing the q-values for each head
         """
-        out = super().forward(obs).split(self.real_action_space.n, dim=1)
+        out = list(super().forward(obs).split(int(self.real_action_space.n), dim=1))
         for i in range(len(out)):
             if self.use_relu[i]:
                 out[i] = relu(out[i])
@@ -156,7 +156,6 @@ class ArDQNPolicy(ARQPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
-        gamma: float = 0.99,
     ) -> None:
         super().__init__(
             observation_space,
@@ -205,10 +204,10 @@ class ArDQNPolicy(ARQPolicy):
             self.delta_qmax_net, self.delta_qmax_net_target = self.make_delta_q_nets()
         elif shared_network == "all":
             net_args = self._update_features_extractor(self.net_args, features_extractor=None)
-            self.hydra_net = HydraNetwork(**net_args).to(self.device)
+            self.hydra_net = HydraNetwork(3, [False, True, True], **net_args).to(self.device)
             self.q_net, self.delta_qmin_net, self.delta_qmax_net = self.hydra_net.create_heads()
             net_args = self._update_features_extractor(self.net_args, features_extractor=None)
-            self.hydra_net_target = HydraNetwork(**net_args).to(self.device)
+            self.hydra_net_target = HydraNetwork(3, [False, True, True], **net_args).to(self.device)
             self.hydra_net_target.load_state_dict(self.hydra_net.state_dict())
             self.hydra_net_target.set_training_mode(False)
             self.q_net_target, self.delta_qmin_net_target, self.delta_qmax_net_target = self.hydra_net_target.create_heads()
@@ -223,6 +222,7 @@ class ArDQNPolicy(ARQPolicy):
             self.delta_qmin_net_target.features_extractor = target_features_extractor
             self.delta_qmax_net_target.features_extractor = target_features_extractor
         elif shared_network == "minmax":
+            raise NotImplementedError("Shared network 'minmax' not implemented yet")
         else:
             raise NotImplementedError(
                 f"Unknown shared_network value: {shared_network}\nPlease use one of: 'none', 'all', 'features_extractor'"
