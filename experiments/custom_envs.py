@@ -11,6 +11,7 @@ except ImportError:  # Python <3.8 support:
     from typing_extensions import Literal
 
 import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
 
 
@@ -194,3 +195,36 @@ DEFAULT_ASPIRATIONS = {
     EMPTY_GRID: lambda n: np.linspace(0, 1, num=n),
     PRISONERS: lambda n: np.linspace(0, 5, num=n),
 }
+
+
+class TimeTupleWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.time_step = 0
+        # Create a Tuple space that contains the original observation space and a Discrete space for the time
+        self.observation_space = spaces.Tuple((env.observation_space, spaces.Discrete(env.spec.max_episode_steps)))
+
+    def observation(self, observation):
+        # Return a tuple that contains the original observation and the elapsed time
+        return observation, self.time_step
+
+    def reset(self, *, seed=None, options=None):
+        # Reset the time counter
+        self.time_step = 0
+        # Call the reset method of the superclass and apply the observation method
+        return super().reset(seed=seed, options=options)
+
+    def step(self, action):
+        # Increment the time counter
+        self.time_step += 1
+        # Call the step method of the superclass and apply the observation method
+        return super().step(action)
+
+
+# Create a gymnasium environment and wrap it with the time wrapper
+env = gym.make("CartPole-v1")
+env = TimeTupleWrapper(env)
+
+# Test the wrapper
+obs = env.reset()
+print(obs)  # (array([-0.009

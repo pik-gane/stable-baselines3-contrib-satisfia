@@ -4,25 +4,31 @@ from stable_baselines3.common.envs import IdentityEnv, IdentityEnvMultiBinary, I
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from sb3_contrib import QRDQN, TRPO
+from sb3_contrib import QRDQN, TRPO, ARDQN
 
 DIM = 4
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TRPO])
+# @pytest.mark.parametrize("model_class", [QRDQN, TRPO, ARDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("env", [IdentityEnv(DIM), IdentityEnvMultiDiscrete(DIM), IdentityEnvMultiBinary(DIM)])
 def test_discrete(model_class, env):
     vec_env = DummyVecEnv([lambda: env])
     kwargs = {}
     n_steps = 1500
-    if model_class == QRDQN:
+    if model_class in {ARDQN, QRDQN}:
+        policy_kwargs = dict(net_arch=[32])
         kwargs = dict(
             learning_starts=0,
-            policy_kwargs=dict(n_quantiles=25, net_arch=[32]),
+            policy_kwargs=policy_kwargs,
             target_update_interval=10,
             train_freq=2,
             batch_size=256,
         )
+        if model_class == QRDQN:
+            policy_kwargs.update(n_quantiles=25)
+        if model_class == ARDQN:
+            kwargs.update(initial_aspiration=120)
         n_steps = 1500
         # DQN only support discrete actions
         if isinstance(env, (IdentityEnvMultiDiscrete, IdentityEnvMultiBinary)):

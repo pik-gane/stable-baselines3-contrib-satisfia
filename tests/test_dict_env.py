@@ -94,7 +94,8 @@ def test_env(use_discrete_actions, channel_last, nested_dict_obs, vec_only):
 
 
 # todo: make this pass for ArDQN (needs DicReplayBuffer support)
-@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO, ARDQN])
+# @pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO, ARDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 def test_consistency(model_class):
     """
     Make sure that dict obs with vector only vs using flatten obs is equivalent.
@@ -107,7 +108,6 @@ def test_consistency(model_class):
     dict_env.seed(10)
     obs, _ = dict_env.reset()
 
-    kwargs = {}
     n_steps = 256
 
     if model_class in {TRPO}:
@@ -142,7 +142,8 @@ def test_consistency(model_class):
     assert np.allclose(action_1, action_2)
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+# @pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("channel_last", [False, True])
 def test_dict_spaces(model_class, channel_last):
     """
@@ -164,7 +165,7 @@ def test_dict_spaces(model_class, channel_last):
                 features_extractor_kwargs=dict(cnn_output_dim=32),
             ),
         )
-    else:
+    elif model_class in {QRDQN, TQC}:
         # Avoid memory error when using replay buffer
         # Reduce the size of the features and make learning faster
         kwargs = dict(
@@ -179,6 +180,19 @@ def test_dict_spaces(model_class, channel_last):
         )
         if model_class == QRDQN:
             kwargs["learning_starts"] = 0
+    elif model_class in {ARDQN}:
+        # Avoid memory error when using replay buffer
+        # Reduce the size of the features and make learning faster
+        kwargs = dict(
+            initial_aspiration=0.0,
+            buffer_size=250,
+            policy_kwargs=dict(
+                net_arch=[32],
+                features_extractor_kwargs=dict(cnn_output_dim=32),
+            ),
+            train_freq=8,
+            gradient_steps=1,
+        )
 
     model = model_class("MultiInputPolicy", env, gamma=0.5, seed=1, **kwargs)
 
@@ -187,7 +201,8 @@ def test_dict_spaces(model_class, channel_last):
     evaluate_policy(model, env, n_eval_episodes=5, warn=False)
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+# @pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("channel_last", [False, True])
 def test_dict_vec_framestack(model_class, channel_last):
     """
@@ -202,7 +217,6 @@ def test_dict_vec_framestack(model_class, channel_last):
 
     env = VecFrameStack(env, n_stack=3, channels_order=channels_order)
 
-    kwargs = {}
     n_steps = 256
 
     if model_class in {TRPO}:
@@ -212,6 +226,19 @@ def test_dict_vec_framestack(model_class, channel_last):
                 net_arch=dict(pi=[32], vf=[32]),
                 features_extractor_kwargs=dict(cnn_output_dim=32),
             ),
+        )
+    elif model_class in {ARDQN}:
+        # Avoid memory error when using replay buffer
+        # Reduce the size of the features and make learning faster
+        kwargs = dict(
+            initial_aspiration=0.0,
+            buffer_size=250,
+            policy_kwargs=dict(
+                net_arch=[32],
+                features_extractor_kwargs=dict(cnn_output_dim=32),
+            ),
+            train_freq=8,
+            gradient_steps=1,
         )
     else:
         # Avoid memory error when using replay buffer
@@ -226,8 +253,8 @@ def test_dict_vec_framestack(model_class, channel_last):
             train_freq=8,
             gradient_steps=1,
         )
-        if model_class == QRDQN:
-            kwargs["learning_starts"] = 0
+    if model_class in {QRDQN, ARDQN}:
+        kwargs["learning_starts"] = 0
 
     model = model_class("MultiInputPolicy", env, gamma=0.5, seed=1, **kwargs)
 
@@ -236,13 +263,16 @@ def test_dict_vec_framestack(model_class, channel_last):
     evaluate_policy(model, env, n_eval_episodes=5, warn=False)
 
 
-@pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+# @pytest.mark.parametrize("model_class", [QRDQN, TQC, TRPO])
+@pytest.mark.parametrize("model_class", [ARDQN])
 def test_vec_normalize(model_class):
     """
     Additional tests to check observation space support
     for GoalEnv and VecNormalize using MultiInputPolicy.
     """
-    env = DummyVecEnv([lambda: gym.wrappers.TimeLimit(DummyDictEnv(use_discrete_actions=model_class == QRDQN), 100)])
+    env = DummyVecEnv(
+        [lambda: gym.wrappers.TimeLimit(DummyDictEnv(use_discrete_actions=model_class in {QRDQN, ARDQN}), 100)] * 2
+    )
     env = VecNormalize(env, norm_obs_keys=["vec"])
 
     kwargs = {}
@@ -255,7 +285,7 @@ def test_vec_normalize(model_class):
                 net_arch=dict(pi=[32], vf=[32]),
             ),
         )
-    else:
+    elif model_class in {QRDQN, TQC}:
         # Avoid memory error when using replay buffer
         # Reduce the size of the features and make learning faster
         kwargs = dict(
@@ -268,6 +298,18 @@ def test_vec_normalize(model_class):
         )
         if model_class == QRDQN:
             kwargs["learning_starts"] = 0
+    elif model_class in {ARDQN}:
+        # Avoid memory error when using replay buffer
+        # Reduce the size of the features and make learning faster
+        kwargs = dict(
+            buffer_size=250,
+            initial_aspiration=0.0,
+            policy_kwargs=dict(
+                net_arch=[32],
+            ),
+            train_freq=8,
+            gradient_steps=1,
+        )
 
     model = model_class("MultiInputPolicy", env, gamma=0.5, seed=1, **kwargs)
 

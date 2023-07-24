@@ -7,11 +7,12 @@ from slurm import submit_job_array
 from itertools import product
 import time
 
-NB_ASPIRATION = 5
-NB_RHO = 9
-NB_MU = 9
+NB_ASPIRATION = 9
+NB_RHO = 5
+NB_MU = 5
+SHARE = ["none", "all", "features_extractor"]
 EXPERIMENT_NAME = "ardqn_experiment_aspiration_rho_mu"
-ENV_ID = PRISONERS
+ENV_ID = EMPTY_GRID
 LOG_PATH = path.join("logs", EXPERIMENT_NAME, ENV_ID)
 ASPIRATIONS = DEFAULT_ASPIRATIONS[ENV_ID](NB_ASPIRATION)
 TRAIN_DQN = True
@@ -21,8 +22,11 @@ N_EVAL_EPISODES = 100
 
 if __name__ == "__main__":
     # Compute the cartesian product of rhos mus and aspirations
-    rhos, mus, aspirations = list(zip(*product(RHOS, MUS, ASPIRATIONS)))
-    ar_names = [f"rho={rho}_mu={mu}_aspiration={aspiration}" for rho, mu, aspiration in zip(rhos, mus, aspirations)]
+    rhos, mus, aspirations, shares = list(zip(*product(RHOS, MUS, ASPIRATIONS, SHARE)))
+    ar_names = [
+        f"rho:{rho}_mu:{mu}_asp:{aspiration}:share:{share if share != 'features_extractor' else 'feats' }"
+        for rho, mu, aspiration, share in zip(rhos, mus, aspirations, shares)
+    ]
     nb_exp = len(aspirations) + TRAIN_DQN
     worker_args = {
         "aspirations": aspirations,
@@ -31,6 +35,7 @@ if __name__ == "__main__":
         "learning_steps": 1_000_000,
         "rhos": rhos,
         "mus": mus,
+        "shared_network": shares,
         "policies": ["MlpPolicy"] * nb_exp,
         "names": ar_names + ["DQN"] * TRAIN_DQN,
         "n_eval_episodes": N_EVAL_EPISODES,

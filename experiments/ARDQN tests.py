@@ -14,14 +14,13 @@ from utils import open_tensorboard, DQNCallback
 
 # from stable_baselines3 import DQN
 
-OPEN_TENSORBOARD = True
+OPEN_TENSORBOARD = False
 experiment = time.strftime("%Y%m%d-%H%M%S") + "_ARDQNTest"
-LEARNING_STEPS = 50_000
+LEARNING_STEPS = 1
 nb_step = 10
 values = np.array([0, 1, 2, 10]) / nb_step
 variances = np.array([1, 1, 1, 1]) / nb_step
 env_id = 'MultiarmedBandits_' + '-'.join(str(i) for i in values) + f'_{nb_step}steps'
-rhos, mus, aspirations = list(zip(*product(RHOS, MUS, ASPIRATIONS)))
 
 
 def make_env(obs_type=None, **kwargs):
@@ -56,6 +55,7 @@ verbose = 0
 # model = DQN("MlpPolicy", env, verbose=verbose, learning_rate=0.1, device='cpu', learning_starts=0)
 models = []
 specs = product(["none", "all", "features_extractor"], list(range(10)))
+specs = [("all", 0)]
 for share, i in tqdm(specs):
     model = ARDQN("MlpPolicy", env, aspiration, verbose=verbose, policy_kwargs=dict(shared_network=share))
     model.set_logger(tb_logger(path.join("ARDQN", share, str(i))))

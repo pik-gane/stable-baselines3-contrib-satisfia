@@ -2,6 +2,8 @@ import warnings
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
+from gymnasium.vector.utils import spaces
+
 from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
 
 try:
@@ -22,7 +24,7 @@ from torch import nn
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
-from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer
+from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer, SatisficingDictReplayBuffer
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
 from sb3_contrib.common.satisficing.utils import interpolate, ratio
 
@@ -39,6 +41,7 @@ class ARDQN(ARQAlgorithm, DQN):
 
     :param policy: The policy model to use (MlpPolicy, CnnPolicy, ...)
     :param env: The environment to learn from (if registered in Gym, can be str)
+    :param initial_aspiration: The initial aspiration of the agent i.e the desired reward over a run
     :param learning_rate: The learning rate, it can be a function
         of the current progress remaining (from 1 to 0)
     :param buffer_size: size of the replay buffer
@@ -101,7 +104,7 @@ class ARDQN(ARQAlgorithm, DQN):
         tau: float = 1.0,
         gamma: float = 0.99,
         rho: float = 0.5,
-        loss: Literal["MSE", "SmoothL1Loss"] = "MSE",
+        loss: Literal["MSE", "SmoothL1Loss"] = "SmoothL1Loss",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -153,6 +156,18 @@ class ARDQN(ARQAlgorithm, DQN):
         )
         self.mu = mu
         self.loss = self.loss_aliases[loss]()
+
+    def _setup_model(self) -> None:
+        self.replay_buffer_class = (
+            SatisficingDictReplayBuffer if isinstance(self.observation_space, spaces.Dict) else SatisficingReplayBuffer
+        )
+        super()._setup_model()
+        # Copy running stats for delta networks, see GH issue #996
+        # Todo
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
+        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
+        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
@@ -271,9 +286,12 @@ class ARDQN(ARQAlgorithm, DQN):
             # Rescale aspiration
             with th.no_grad():
                 # will update self.policy.aspiration
-                aspiration_diff = aspiration_diff = (self.policy.aspiration - np.take_along_axis(
-                    self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
-                ).squeeze(1)).mean()
+                aspiration_diff = aspiration_diff = (
+                    self.policy.aspiration
+                    - np.take_along_axis(
+                        self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                    ).squeeze(1)
+                ).mean()
                 self.rescale_aspiration(
                     self._last_obs,
                     actions,
@@ -372,15 +390,15 @@ class ARDQN(ARQAlgorithm, DQN):
                     if self._vec_normalize_env is not None:
                         next_obs[i] = self._vec_normalize_env.unnormalize_obs(next_obs[i, :])
 
-        replay_buffer.add_with_lambda(
+        replay_buffer.add(
             self._last_original_obs,
-            self._last_lambda,
             next_obs,
-            new_lambda,
             buffer_action,
             reward_,
             dones,
             infos,
+            lambda_=self._last_lambda,
+            next_lambda=new_lambda,
         )
         self._last_lambda = new_lambda
         self._last_obs = new_obs
@@ -434,14 +452,6 @@ class ARDQN(ARQAlgorithm, DQN):
             polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
         self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
-
-    def _setup_model(self) -> None:
-        super()._setup_model()
-        # Copy running stats for delta networks, see GH issue #996
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:
         """

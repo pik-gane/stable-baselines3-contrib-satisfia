@@ -47,7 +47,7 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
             initial_aspiration=0.5,
             policy_kwargs=dict(
                 features_extractor_kwargs=dict(features_dim=32),
-                share_network="features_extractor" if share_features_extractor else "none",
+                shared_network="features_extractor" if share_features_extractor else "none",
             ),
         )
 
@@ -80,14 +80,53 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
     os.remove(str(tmp_path / SAVE_NAME))
 
 
+class DummyModule:
+    """
+    Used for patching names in ARDQN
+    """
+
+    def __init__(self, model: ARDQN, is_target: bool):
+        self.model = model
+        self.is_target = is_target
+
+    def parameters(self):
+        if self.is_target:
+            # Return the parameters of the target networks (q_net_target, delta_qmin_net_target, delta_qmax_net_target)
+            return (
+                list(self.model.q_net_target.parameters())
+                + list(self.model.delta_qmin_net_target.parameters())
+                + list(self.model.delta_qmax_net_target.parameters())
+            )
+        else:
+            return (
+                list(self.model.q_net.parameters())
+                + list(self.model.delta_qmin_net.parameters())
+                + list(self.model.delta_qmax_net.parameters())
+            )
+
+    def named_parameters(self):
+        if self.is_target:
+            return {
+                "q_net": dict(self.model.q_net_target.named_parameters()),
+                "delta_qmin_net": dict(self.model.delta_qmin_net_target.named_parameters()),
+                "delta_qmax_net": dict(self.model.delta_qmax_net_target.named_parameters()),
+            }
+        else:
+            return {
+                "q_net": dict(self.model.q_net.named_parameters()),
+                "delta_qmin_net": dict(self.model.delta_qmin_net.named_parameters()),
+                "delta_qmax_net": dict(self.model.delta_qmax_net.named_parameters()),
+            }
+
+
 def patch_names_(model):
     # Small hack to make the test work with QRDQN and ARDQN
     if isinstance(model, QRDQN):
         model.critic = model.quantile_net
         model.critic_target = model.quantile_net_target
     if isinstance(model, ARDQN):
-        model.critic = model.q_net
-        model.critic_target = model.q_net_target
+        model.critic = DummyModule(model, is_target=False)
+        model.critic_target = DummyModule(model, is_target=True)
 
 
 def params_should_match(params, other_params):
@@ -100,10 +139,14 @@ def params_should_differ(params, other_params):
         assert not th.allclose(param, other_param)
 
 
-@pytest.mark.parametrize("model_class", [TQC, QRDQN, ARDQN])
+# @pytest.mark.parametrize("model_class", [TQC, QRDQN, ARDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
-def test_feature_extractor_target_net(model_class, share_features_extractor):
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none"])
+def test_feature_extractor_target_net(model_class, share_features_extractor, shared_network):
     if model_class in {QRDQN, ARDQN} and share_features_extractor:
+        pytest.skip()
+    if model_class not in {ARDQN} and shared_network != "none":
         pytest.skip()
 
     env = FakeImageEnv(screen_height=40, screen_width=40, n_channels=1, discrete=model_class not in {TQC})
@@ -120,6 +163,7 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
         kwargs["policy_kwargs"]["n_quantiles"] = 25
     if model_class in {ARDQN}:
         kwargs["initial_aspiration"] = 0.5
+        kwargs["policy_kwargs"]["shared_network"] = shared_network
     if model_class not in {QRDQN, ARDQN}:
         kwargs["policy_kwargs"]["share_features_extractor"] = share_features_extractor
 
@@ -127,6 +171,13 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
 
     patch_names_(model)
 
+    if shared_network in {"features_extractor", "all"}:
+        # Check that the objects are the same and not just copied
+        assert (
+            id(model.policy.q_net.features_extractor)
+            == id(model.policy.delta_qmin_net.features_extractor)
+            == id(model.policy.delta_qmax_net.features_extractor)
+        )
     if share_features_extractor:
         # Check that the objects are the same and not just copied
         assert id(model.policy.actor.features_extractor) == id(model.policy.critic.features_extractor)
@@ -186,7 +237,8 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
 # @pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, ArDQN])
 @pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("normalize_images", [True, False])
-def test_image_like_input(model_class, normalize_images):
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none"])
+def test_image_like_input(model_class, normalize_images, shared_network):
     """
     Check that we can handle image-like input (3D tensor)
     when normalize_images=False

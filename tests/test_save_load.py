@@ -29,7 +29,8 @@ def select_env(model_class: BaseAlgorithm) -> gym.Env:
 
 
 @pytest.mark.parametrize("model_class", MODEL_LIST)
-def test_save_load(tmp_path, model_class):
+@pytest.mark.parametrize("shared_network", ["all", "none", "features_extractor"])
+def test_save_load(tmp_path, model_class, shared_network):
     """
     Test if 'save' and 'load' saves and loads model correctly
     and if 'get_parameters' and 'set_parameters' and work correctly.
@@ -46,7 +47,8 @@ def test_save_load(tmp_path, model_class):
     if model_class in {QRDQN, TQC}:
         policy_kwargs.update(dict(n_quantiles=20))
     if model_class in {ARDQN}:
-        kwargs["initial_aspiration"] = 0.0
+        kwargs.update(initial_aspiration=0.0)
+        policy_kwargs.update(dict(shared_network=shared_network))
 
     # create model
     model = model_class("MlpPolicy", env, verbose=1, **kwargs)
@@ -204,18 +206,20 @@ def test_set_env(model_class):
 
 
 @pytest.mark.parametrize("model_class", MODEL_LIST)
-def test_exclude_include_saved_params(tmp_path, model_class):
+@pytest.mark.parametrize("shared_network", ["all", "none", "features_extractor"])
+def test_exclude_include_saved_params(tmp_path, model_class, shared_network):
     """
     Test if exclude and include parameters of save() work
 
     :param model_class: (BaseAlgorithm) A RL model
     """
     env = DummyVecEnv([lambda: select_env(model_class)])
-    kwargs = {}
+    kwargs = dict(policy_kwargs=dict(net_arch=[16]))
     if model_class in {ARDQN}:
         kwargs["initial_aspiration"] = 0.0
+        kwargs["policy_kwargs"].update(dict(shared_network=shared_network))
     # create model, set verbose as 2, which is not standard
-    model = model_class("MlpPolicy", env, policy_kwargs=dict(net_arch=[16]), verbose=2, **kwargs)
+    model = model_class("MlpPolicy", env, verbose=2, **kwargs)
 
     # Check if exclude works
     model.save(tmp_path / "test_save", exclude=["verbose"])
@@ -266,7 +270,8 @@ def test_save_load_replay_buffer(tmp_path, model_class):
 
 @pytest.mark.parametrize("model_class", MODEL_LIST)
 @pytest.mark.parametrize("policy_str", ["MlpPolicy", "CnnPolicy"])
-def test_save_load_policy(tmp_path, model_class, policy_str):
+@pytest.mark.parametrize("shared_network", ["all", "none", "features_extractor"])
+def test_save_load_policy(tmp_path, model_class, policy_str, shared_network):
     """
     Test saving and loading policy only.
 
@@ -301,6 +306,7 @@ def test_save_load_policy(tmp_path, model_class, policy_str):
         kwargs["policy_kwargs"].update(dict(n_quantiles=20))
     if model_class in {ARDQN}:
         kwargs["initial_aspiration"] = 0.0
+        kwargs["policy_kwargs"].update(dict(shared_network=shared_network))
 
     env = DummyVecEnv([lambda: env])
 
