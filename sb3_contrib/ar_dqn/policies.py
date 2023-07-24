@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, Literal
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, Literal, Sequence
 import numpy as np
 import torch as th
 from gymnasium import spaces
@@ -18,10 +18,14 @@ class HydraNetwork(QNetwork):
     """
     Hydra network for AR-DQN. This QNetwork has three heads, one for the q-values, one for the delta_qmin and
     one for the delta_qmax.
+
+
     """
 
     def __init__(
         self,
+        nb_output: int,
+        use_relu: Sequence[bool],
         observation_space: spaces.Space,
         action_space: spaces.Discrete,
         features_extractor: BaseFeaturesExtractor,
@@ -32,27 +36,29 @@ class HydraNetwork(QNetwork):
     ) -> None:
         super().__init__(
             observation_space,
-            spaces.Discrete(action_space.n * 3),
+            spaces.Discrete(action_space.n * nb_output),
             features_extractor,
             features_dim,
             net_arch=net_arch,
             activation_fn=activation_fn,
             normalize_images=normalize_images,
         )
+        self.nb_output = nb_output
+        self.use_relu = use_relu
         self.real_action_space = action_space
 
-    def forward(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def forward(self, obs: th.Tensor) -> List[th.Tensor]:
         """
-        Predict the q-values.
+        Predict the q-values associated with each network head.
 
         :param obs: Observation
-        :return: A tuple containing the Q-values, delta_qmin and delta_qmax
+        :return: A list of tensors containing the q-values for each head
         """
-        out = super().forward(obs)
-        q_values = out[:, : self.real_action_space.n]
-        delta_qmin = out[:, self.real_action_space.n : self.real_action_space.n * 2]
-        delta_qmax = out[:, self.real_action_space.n * 2 :]
-        return q_values, relu(delta_qmin), relu(delta_qmax)
+        out = super().forward(obs).split(self.real_action_space.n, dim=1)
+        for i in range(len(out)):
+            if self.use_relu[i]:
+                out[i] = relu(out[i])
+        return out
 
     def _make_head(self, index: int) -> HydraHead:
         return HydraHead(
@@ -68,13 +74,11 @@ class HydraNetwork(QNetwork):
             self.optimizer_kwargs,
         )
 
-    def create_heads(self) -> Tuple[HydraHead, HydraHead, HydraHead]:
+    def create_heads(self) -> List[HydraHead]:
         """
-        Create the three heads of the Hydra network.
-
-        :return: q_net, delta_qmin_net, delta_qmax_net
+        Create the heads of the Hydra network.
         """
-        return self._make_head(0), self._make_head(1), self._make_head(2)
+        return [self._make_head(i) for i in range(self.nb_output)]
 
 
 class HydraHead(BaseModel):
@@ -143,7 +147,8 @@ class ArDQNPolicy(ARQPolicy):
         initial_aspiration: float,
         gamma: float,
         rho: float,
-        shared_network: Literal["features_extractor", "all", "none"] = "none",
+        shared_network: Literal["features_extractor", "all", "none", "minmax"] = "none",
+        use_delta_nets: bool = True,
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -157,6 +162,7 @@ class ArDQNPolicy(ARQPolicy):
             observation_space,
             action_space,
             initial_aspiration,
+            use_delta_nets,
             gamma=gamma,
             rho=rho,
             features_extractor_class=features_extractor_class,
@@ -183,9 +189,10 @@ class ArDQNPolicy(ARQPolicy):
             "normalize_images": normalize_images,
         }
         self.shared_network = shared_network
-        self._build(lr_schedule, shared_network)
+        self._build(lr_schedule, shared_network, use_delta_nets)
 
-    def _build(self, lr_schedule: Schedule, shared_network) -> None:
+
+    def _build(self, lr_schedule: Schedule, shared_network, use_delta_nets) -> None:
         """
         Create the networks and the optimizer.
 
@@ -200,6 +207,7 @@ class ArDQNPolicy(ARQPolicy):
             net_args = self._update_features_extractor(self.net_args, features_extractor=None)
             self.hydra_net = HydraNetwork(**net_args).to(self.device)
             self.q_net, self.delta_qmin_net, self.delta_qmax_net = self.hydra_net.create_heads()
+            net_args = self._update_features_extractor(self.net_args, features_extractor=None)
             self.hydra_net_target = HydraNetwork(**net_args).to(self.device)
             self.hydra_net_target.load_state_dict(self.hydra_net.state_dict())
             self.hydra_net_target.set_training_mode(False)
@@ -214,6 +222,7 @@ class ArDQNPolicy(ARQPolicy):
             target_features_extractor = self.q_net_target.features_extractor
             self.delta_qmin_net_target.features_extractor = target_features_extractor
             self.delta_qmax_net_target.features_extractor = target_features_extractor
+        elif shared_network == "minmax":
         else:
             raise NotImplementedError(
                 f"Unknown shared_network value: {shared_network}\nPlease use one of: 'none', 'all', 'features_extractor'"
@@ -285,6 +294,9 @@ class ArDQNPolicy(ARQPolicy):
             polyak_update(self.delta_qmin_net.q_net.parameters(), self.delta_qmin_net_target.q_net.parameters(), tau)
             # Update the features extractor separately to avoid updating it three times
             polyak_update(self.q_net.features_extractor.parameters(), self.q_net_target.features_extractor.parameters(), tau)
+        elif self.shared_network == "minmax":
+            polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), tau)
+            polyak_update(self.hydra_net.parameters(), self.hydra_net_target.parameters(), tau)
 
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:

@@ -5,12 +5,10 @@ import numpy as np
 import psutil
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.buffers import ReplayBuffer
+from stable_baselines3.common.buffers import ReplayBuffer, DictReplayBuffer
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
-
-# Todo? : add support DictReplayBuffer
+from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples, SatisficingDictReplayBufferSamples
 
 
 class SatisficingReplayBuffer(ReplayBuffer):
@@ -71,21 +69,16 @@ class SatisficingReplayBuffer(ReplayBuffer):
                     f"replay buffer {total_memory_usage:.2f}GB > {mem_available:.2f}GB"
                 )
 
-    def add_with_lambda(
+    def add(
         self,
-        obs: np.ndarray,
+        *args,
         lambda_: np.ndarray,
-        next_obs: np.ndarray,
         next_lambda: np.ndarray,
-        action: np.ndarray,
-        reward: np.ndarray,
-        done: np.ndarray,
-        infos: List[Dict[str, Any]],
     ) -> None:
         """
         Same as ReplayBuffer.add, but adapted so that it also stores lambda in the transition
         """
-        super().add(obs, next_obs, action, reward, done, infos)
+        super().add(*args)
         self.lambdas[self.pos] = np.array(lambda_).copy()
         self.next_lambdas[self.pos] = np.array(next_lambda).copy()
 
