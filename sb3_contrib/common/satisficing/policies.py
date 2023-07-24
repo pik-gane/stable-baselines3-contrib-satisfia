@@ -19,6 +19,7 @@ class ARQPolicy(BasePolicy):
         observation_space: spaces.Space,
         action_space: spaces.Discrete,
         initial_aspiration: float,
+        use_delta_predictor: bool,
         *,
         gamma,
         rho,
@@ -30,7 +31,8 @@ class ARQPolicy(BasePolicy):
             **kwargs,
         )
         self.initial_aspiration = initial_aspiration
-        self.aspiration: Union[float, np.ndarray] = initial_aspiration
+        self.use_delta_predictor = use_delta_predictor
+        self.aspiration: np.ndarray = np.array(initial_aspiration)
         self.gamma = gamma
         self.rho = rho
 
