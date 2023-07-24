@@ -59,7 +59,8 @@ class ARQPolicy(BasePolicy):
         actions = th.zeros(len(obs), dtype=th.int)
         aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
         # todo?: using a for loop may be crappy, if it's too slow, we could rewrite this using pytorch
-        for i in range(len(obs)):
+        batch_size = len(list(obs.values())[0]) if isinstance(obs, dict) else len(obs)
+        for i in range(batch_size):
             q_values: th.Tensor = q_values_batch[i]
             if aspirations.dim() > 0:
                 aspiration = aspirations[i]
@@ -129,7 +130,7 @@ class ARQPolicy(BasePolicy):
             next_q = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
             next_aspiration = interpolate(next_q.min(dim=1).values, next_lambda, next_q.max(dim=1).values).cpu().numpy()
             delta_hard = -rewards / self.gamma
-            delta_soft = next_aspiration - q.cpu().numpy() / self.gamma
+            delta_soft = next_aspiration - q.cpu().squeeze(dim=1).numpy() / self.gamma
             self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
@@ -138,7 +139,7 @@ class ARQPolicy(BasePolicy):
 
         :param dones: if not None, reset only the aspiration that correspond to the done environments
         """
-        if dones is None or isinstance(self.aspiration, float):
+        if dones is None or self.aspiration.ndim == 0:
             self.aspiration = self.initial_aspiration
         else:
             self.aspiration[dones] = self.initial_aspiration
