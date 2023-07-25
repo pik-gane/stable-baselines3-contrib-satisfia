@@ -104,7 +104,7 @@ class ARQPolicy(BasePolicy):
         actions: np.ndarray,
         rewards: np.ndarray,
         next_obs: np.ndarray,
-        use_q_target: bool = True,
+        use_q_target,
     ) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
@@ -119,10 +119,10 @@ class ARQPolicy(BasePolicy):
         obs, next_obs = self.obs_to_tensor(obs)[0], self.obs_to_tensor(next_obs)[0]
         with th.no_grad():
             actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_predictor(obs), dim=1, index=actions)
+            q = th.gather(self.q_target_predictor(obs) if use_q_target else self.q_predictor(obs), dim=1, index=actions)
             qmin_predictor = self.delta_qmin_target_predictor if use_q_target else self.delta_qmin_predictor
             qmax_predictor = self.delta_qmax_target_predictor if use_q_target else self.delta_qmax_predictor
-            q_min: th.Tensor = q - th.gather(qmin_predictor(obs), 1, actions)
+            q_min = q - th.gather(qmin_predictor(obs), 1, actions)
             q_max = q + th.gather(qmax_predictor(obs), 1, actions)
             next_lambda = ratio(q_min, q, q_max).squeeze(dim=1)
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
@@ -140,7 +140,7 @@ class ARQPolicy(BasePolicy):
         :param dones: if not None, reset only the aspiration that correspond to the done environments
         """
         if dones is None or self.aspiration.ndim == 0:
-            self.aspiration = self.initial_aspiration
+            self.aspiration = np.array(self.initial_aspiration)
         else:
             self.aspiration[dones] = self.initial_aspiration
 

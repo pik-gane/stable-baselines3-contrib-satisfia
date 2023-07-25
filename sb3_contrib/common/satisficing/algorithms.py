@@ -120,8 +120,8 @@ class ARQAlgorithm(ABC):
         obs: th.Tensor,
         actions: th.Tensor,
         q_target: th.Tensor,
-        delta_qmin_target: th.Tensor,
-        delta_qmax_target: th.Tensor,
+        qmin_target: th.Tensor,
+        qmax_target: th.Tensor,
     ):
         """
         Update the predictors of the policy.
@@ -129,8 +129,8 @@ class ARQAlgorithm(ABC):
         :param obs: the observed states
         :param actions: the actions taken
         :param q_target: the target Q values
-        :param delta_qmin_target: the target delta Qmin values
-        :param delta_qmax_target: the target delta Qmax values
+        :param qmin_target: the target delta Qmin values
+        :param qmax_target: the target delta Qmax values
         """
 
     def _get_targets(self, new_obs: th.Tensor, rewards: th.Tensor, dones: th.Tensor, smooth_lambda: th.Tensor):
@@ -148,9 +148,9 @@ class ARQAlgorithm(ABC):
             v_max = next_q_values.max(dim=1).values.unsqueeze(1)
             v = interpolate(v_min, smooth_lambda, v_max)
             q_target = rewards + self.policy.gamma * dones.logical_not() * v
-            delta_qmin_target = self.policy.gamma * (v - v_min) * dones.logical_not()
-            delta_qmax_target = self.policy.gamma * (v_max - v) * dones.logical_not()
-            return q_target, delta_qmin_target, delta_qmax_target
+            qmin_target = rewards + self.policy.gamma * dones.logical_not() * v_min
+            qmax_target = rewards + self.policy.gamma * dones.logical_not() * v_max
+            return q_target, qmin_target, qmax_target
 
     def _learning_step(
         self,
@@ -171,20 +171,24 @@ class ARQAlgorithm(ABC):
         :param dones: whether an episode is done or not
         :param smooth_lambdas: the smoothed relative local aspirations
         """
-        q_target, delta_qmin_target, delta_qmax_target = self._get_targets(new_obs, rewards, dones, smooth_lambdas)
-        q_pred = self.policy.q_predictor(obs).gather(1, actions).squeeze()
-        self.logger.record_mean("train/mean_q_loss", float(F.mse_loss(q_pred, q_target.squeeze()).mean()))
-        delta_qmin = self.policy.delta_qmin_predictor(obs).gather(1, actions).squeeze()
-        self.logger.record_mean(
-            "train/mean_delta_qmin_loss",
-            float(F.mse_loss(delta_qmin.squeeze(), delta_qmin_target.squeeze()).mean()),
-        )
-        delta_qmax = self.policy.delta_qmax_predictor(obs).gather(1, actions).squeeze()
-        self.logger.record_mean(
-            "train/mean_delta_qmax_loss",
-            float(F.mse_loss(delta_qmax, delta_qmax_target.squeeze()).mean()),
-        )
-        self._update_predictors(obs, actions, q_target, delta_qmin_target, delta_qmax_target)
+        q_target, qmin_target, qmax_target = self._get_targets(new_obs, rewards, dones, smooth_lambdas)
+        with th.no_grad():
+            q_pred = self.policy.q_predictor(obs).gather(1, actions).squeeze()
+            delta_qmin = self.policy.delta_qmin_predictor(obs).gather(1, actions).squeeze()
+            self.logger.record_mean("train/mean_q_loss", float(F.mse_loss(q_pred, q_target.squeeze()).mean()))
+            self.logger.record_mean(
+                "train/mean_delta_qmin_loss",
+                float(F.mse_loss(q_pred - delta_qmin.squeeze(), qmin_target.squeeze()).mean()),
+            )
+            self.logger.record_mean("train/old_delta_qmin_loss", float(F.mse_loss(delta_qmin, q_target - qmin_target)))
+            delta_qmax = self.policy.delta_qmax_predictor(obs).gather(1, actions).squeeze()
+            self.logger.record_mean(
+                "train/mean_delta_qmax_loss",
+                float(F.mse_loss(q_pred + delta_qmax, qmax_target.squeeze()).mean()),
+            )
+            self.logger.record_mean("train/old_delta_qmax_loss", float(F.mse_loss(delta_qmax, qmax_target - q_target)))
+
+        self._update_predictors(obs, actions, q_target, qmin_target, qmax_target)
 
     def switch_to_eval(self) -> None:
         """

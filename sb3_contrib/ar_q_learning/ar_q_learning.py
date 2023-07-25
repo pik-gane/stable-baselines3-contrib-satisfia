@@ -199,11 +199,11 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
         callback.on_training_end()
         return self
 
-    def _update_predictors(self, obs, actions, q_target, delta_qmin_target, delta_qmax_target):
+    def _update_predictors(self, obs, actions, q_target, qmin_target, qmax_target):
         learning_rate = self.learning_rate
         self.q_table.update_table(obs, actions, q_target, learning_rate)
-        self.delta_qmin_table.update_table(obs, actions, delta_qmin_target, learning_rate)
-        self.delta_qmax_table.update_table(obs, actions, delta_qmax_target, learning_rate)
+        self.delta_qmin_table.update_table(obs, actions, qmin_target, learning_rate)
+        self.delta_qmax_table.update_table(obs, actions, qmax_target, learning_rate)
 
     def _on_step(self):
         self.num_timesteps += self.env.num_envs

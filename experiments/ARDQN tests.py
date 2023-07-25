@@ -14,12 +14,12 @@ from utils import open_tensorboard, DQNCallback
 
 # from stable_baselines3 import DQN
 
-OPEN_TENSORBOARD = False
-experiment = time.strftime("%Y%m%d-%H%M%S") + "_ARDQNTest"
-LEARNING_STEPS = 1
-nb_step = 10
-values = np.array([0, 1, 2, 10]) / nb_step
-variances = np.array([1, 1, 1, 1]) / nb_step
+OPEN_TENSORBOARD = True
+experiment = time.strftime("%Y%m%d-%H%M%S") + "_ARDQNTest" + input("Experiment name: ")
+LEARNING_STEPS = 1_000_000
+nb_step = 20
+values = np.array([0, 1, 2, 10]) / nb_step / 10
+variances = np.array([1, 1, 1, 1]) / nb_step / 10
 env_id = 'MultiarmedBandits_' + '-'.join(str(i) for i in values) + f'_{nb_step}steps'
 
 
@@ -50,14 +50,14 @@ if OPEN_TENSORBOARD:
     tb_window = open_tensorboard(log_path)
 
 env = make_env(obs_type='step_count')
-aspiration = 2
+aspiration = 0.5
 verbose = 0
 # model = DQN("MlpPolicy", env, verbose=verbose, learning_rate=0.1, device='cpu', learning_starts=0)
 models = []
 specs = product(["none", "all", "features_extractor"], list(range(10)))
-specs = [("all", 0)]
+specs = [("none", 0)]
 for share, i in tqdm(specs):
-    model = ARDQN("MlpPolicy", env, aspiration, verbose=verbose, policy_kwargs=dict(shared_network=share))
+    model = ARDQN("MlpPolicy", env, aspiration, verbose=verbose, policy_kwargs=dict(shared_network=share), rho=1)
     model.set_logger(tb_logger(path.join("ARDQN", share, str(i))))
     model.learn(LEARNING_STEPS)  # , log_interval=10000000)
     models.append(model)

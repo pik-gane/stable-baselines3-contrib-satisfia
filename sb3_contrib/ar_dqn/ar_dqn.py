@@ -208,26 +208,28 @@ class ARDQN(ARQAlgorithm, DQN):
         obs: th.Tensor,
         actions: th.Tensor,
         q_target: th.Tensor,
-        delta_qmin_target: th.Tensor,
-        delta_qmax_target: th.Tensor,
+        qmin_target: th.Tensor,
+        qmax_target: th.Tensor,
     ):
         current_q_values = self.q_net(obs)
         current_delta_min, current_delta_max = self.delta_qmin_net(obs), self.delta_qmax_net(obs)
 
         # Retrieve the q-values for the actions from the replay buffer
         current_q_values = th.gather(current_q_values, dim=1, index=actions)
-        current_delta_min = th.gather(current_delta_min, dim=1, index=actions)
-        current_delta_max = th.gather(current_delta_max, dim=1, index=actions)
+        # Detach the q-values, as we don't want to update them for the q_min/q_max loss
+        q = current_q_values.detach()
+        current_q_min = q - th.gather(current_delta_min, dim=1, index=actions)
+        current_q_max = q + th.gather(current_delta_max, dim=1, index=actions)
 
         # Compute Huber loss (less sensitive to outliers)
         q_loss = self.loss(current_q_values, q_target)
-        qmin_loss = self.loss(current_delta_min, delta_qmin_target)
-        qmax_loss = self.loss(current_delta_max, delta_qmax_target)
+        q_min_loss = self.loss(current_q_min, qmin_target)
+        q_max_loss = self.loss(current_q_max, qmax_target)
 
         # Optimize the policy
         self.policy.optimizer.zero_grad()
         # Backward all losses
-        (q_loss + qmin_loss + qmax_loss).backward()
+        (q_loss + q_min_loss + q_max_loss).backward()
         # Clip gradient norm
         th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
         self.policy.optimizer.step()
