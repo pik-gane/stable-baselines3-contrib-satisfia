@@ -91,7 +91,8 @@ The code is structured as follow:
 ├── scripts
 │   └── run_tests.sh  # Useful to check your code
 ├── setup.py
-├── tests  # A folder containing tests that you can run to check if you didn't break anything. Disclaimer: I mostly just adapted existing test to ARDQN. I also disabled the tests of the other algorithms to speed up the test. As I'm writing those lines there are still some tests that don't pass :)
+├── tests  # A folder containing tests that you can run to check if you didn't break anything. Disclaimer: I mostly just adapted existing test to ARDQN. 
+│   │      # I also disabled the tests of the other algorithms to speed up the test. As I'm writing those lines there are still some tests that don't pass :)
 │   ├── test_cnn.py
 │   ├── test_deterministic.py
 │   ├── test_dict_env.py
