@@ -5,10 +5,10 @@ import numpy as np
 import psutil
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.buffers import ReplayBuffer, DictReplayBuffer
+from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples, SatisficingDictReplayBufferSamples
+from sb3_contrib.common.satisficing.type_aliases import SatisficingDictReplayBufferSamples, SatisficingReplayBufferSamples
 
 
 class SatisficingReplayBuffer(ReplayBuffer):
@@ -170,7 +170,6 @@ class SatisficingDictReplayBuffer(DictReplayBuffer):
         super().add(*args)
         self.lambdas[self.pos] = np.array(lambda_).copy()
         self.next_lambdas[self.pos] = np.array(next_lambda).copy()
-
 
     def _get_samples(
         self,

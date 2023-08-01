@@ -136,7 +136,7 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
                 print(f"I receive reward {float(rewards):.2f} and arrive in state {int(new_obs)}\n")
             with th.no_grad():
                 aspiration_diff = self.policy.aspiration - self.policy.q_values(obs, actions).cpu().numpy()
-            self.rescale_aspiration(obs, actions, rewards, new_obs)
+            self.propagate_aspiration(obs, actions, rewards, new_obs)
             self.reset_aspiration(dones)
             new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(min=0, max=1)
             if self.verbose >= 2:

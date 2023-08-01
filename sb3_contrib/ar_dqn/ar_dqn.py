@@ -15,18 +15,18 @@ import numpy as np
 import torch as th
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
+from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import get_parameters_by_name, polyak_update, should_collect_more_steps
+from stable_baselines3.common.utils import get_parameters_by_name, get_schedule_fn, polyak_update, should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
-from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer, SatisficingDictReplayBuffer
+from sb3_contrib.common.satisficing.buffers import SatisficingDictReplayBuffer, SatisficingReplayBuffer
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
-from sb3_contrib.common.satisficing.utils import interpolate, ratio
+from sb3_contrib.common.satisficing.utils import interpolate
 
 SelfArDQN = TypeVar("SelfArDQN", bound="ArDQN")
 
@@ -50,6 +50,9 @@ class ARDQN(ARQAlgorithm, DQN):
     :param mu: the aspiration smoothing coefficient (between 0 and 1) default 0 for no smoothing for lambda
     :param tau: the soft update coefficient ("Polyak update", between 0 and 1) default 1 for hard update
     :param gamma: the discount factor
+    :param rho: the aspiration propagation coefficient (between 0 and 1). 0 is for hard update (-= r /= gamma) and 1
+        is for aspiration rescaling. Default is 0.5. It can be a function
+        of the current progress remaining (from 1 to 0)
     :param loss: The loss function to use (MSELoss or SmoothL1Loss)
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
@@ -69,8 +72,7 @@ class ARDQN(ARQAlgorithm, DQN):
     :param stats_window_size: Window size for the rollout logging, specifying the number of episodes to average
         the reported success rate, mean episode length, and mean reward over
     :param tensorboard_log: the log location for tensorboard (if None, no logging)
-    :param policy_kwargs: additional arguments to be passed to the policy on creation. MUST contains
-        initial_aspiration: The inital aspiration of the agent i.e the desired reward over a run
+    :param policy_kwargs: additional arguments to be passed to the policy on creation
     :param verbose: Verbosity level: 0 for no output, 1 for info messages (such as device or wrappers used), 2 for
         debug messages
     :param seed: Seed for the pseudo random generators
@@ -103,7 +105,7 @@ class ARDQN(ARQAlgorithm, DQN):
         mu: float = 0.5,
         tau: float = 1.0,
         gamma: float = 0.99,
-        rho: float = 0.5,
+        rho: Union[float, Schedule] = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "SmoothL1Loss",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
@@ -125,6 +127,7 @@ class ARDQN(ARQAlgorithm, DQN):
         if initial_aspiration is None and isinstance(policy, str):
             raise ValueError("You must specify an initial aspiration for AR DQN")
         # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
+        self.rho = rho
         super().__init__(
             initial_aspiration,
             policy,
@@ -155,15 +158,18 @@ class ARDQN(ARQAlgorithm, DQN):
             _init_setup_model=_init_setup_model,
         )
         self.mu = mu
-        self.loss = self.loss_aliases[loss]()
+        if loss in self.loss_aliases.keys():
+            self.loss = self.loss_aliases[loss]()
 
     def _setup_model(self) -> None:
         self.replay_buffer_class = (
             SatisficingDictReplayBuffer if isinstance(self.observation_space, spaces.Dict) else SatisficingReplayBuffer
         )
         super()._setup_model()
+        self.rho_schedule = get_schedule_fn(self.rho)
+        self.rho = self.rho_schedule(1)
+        self.policy.rho = self.rho
         # Copy running stats for delta networks, see GH issue #996
-        # Todo
         self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
         self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
         self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
@@ -294,7 +300,7 @@ class ARDQN(ARQAlgorithm, DQN):
                         self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
                     ).squeeze(1)
                 ).mean()
-                self.rescale_aspiration(
+                self.propagate_aspiration(
                     self._last_obs,
                     actions,
                     rewards,
@@ -453,7 +459,9 @@ class ARDQN(ARQAlgorithm, DQN):
             # Copy running stats, see GH issue #996
             polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
         self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+        self.policy.rho = self.rho_schedule(self._current_progress_remaining)
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
+        self.logger.record("rollout/rho", self.policy.rho)
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:
         """

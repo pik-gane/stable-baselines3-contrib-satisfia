@@ -108,15 +108,15 @@ def evaluate_policy(
             deterministic=deterministic,
         )
         new_observations, rewards, dones, infos = env.step(actions)
-        model.rescale_aspiration(observations, actions, rewards, new_observations, use_q_target=False)
+        model.propagate_aspiration(observations, actions, rewards, new_observations, use_q_target=False)
         # logs
         new_aspiration = deepcopy(model.policy.aspiration)
         with th.no_grad():
-            new_lambda = model.policy.lambda_ratio(new_observations, model.policy.aspiration).cpu().numpy()
+            new_lambda = model.policy.lambda_ratio(new_observations, model.policy.aspiration).squeeze(dim=1).cpu().numpy()
         for i in range(n_envs):
             if not dones[i]:
-                current_lambdas[i].append(new_lambda[i])
-                current_aspirations[i].append(new_aspiration[i])
+                current_lambdas[i].append(float(new_lambda[i]))
+                current_aspirations[i].append(float(new_aspiration[i]))
             current_rew_left[i].append(current_rew_left[i][-1] - rewards[i])
 
         model.reset_aspiration(dones)
@@ -524,7 +524,7 @@ def evaluate_hard_policy(
         new_observations, rewards, dones, infos = env.step(actions)
         model.policy.aspiration -= rewards
         model.policy.aspiration /= model.policy.gamma
-        # model.rescale_aspiration(observations, actions, new_observations, use_q_target=False)
+        # model.propagate_aspiration(observations, actions, new_observations, use_q_target=False)
         # logs
         new_aspiration = deepcopy(model.policy.aspiration)
         with th.no_grad():

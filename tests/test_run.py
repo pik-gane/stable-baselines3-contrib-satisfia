@@ -188,6 +188,6 @@ def test_multi_env_ardqn(env_id):
         obs, r, done, _ = env.step(a)
         if done.any():
             break
-        model.rescale_aspiration(last_obs, a, r, obs)
+        model.propagate_aspiration(last_obs, a, r, obs)
         model.reset_aspiration(done)
         last_obs = obs
