@@ -16,8 +16,8 @@ from utils import open_tensorboard, DQNCallback
 
 OPEN_TENSORBOARD = False
 experiment = time.strftime("%Y%m%d-%H%M%S") + "_ARDQNTest"
-LEARNING_STEPS = 1
-nb_step = 10
+LEARNING_STEPS = 1000
+nb_step = 30
 values = np.array([0, 1, 2, 10]) / nb_step
 variances = np.array([1, 1, 1, 1]) / nb_step
 env_id = 'MultiarmedBandits_' + '-'.join(str(i) for i in values) + f'_{nb_step}steps'
@@ -57,9 +57,9 @@ models = []
 specs = product(["none", "all", "features_extractor"], list(range(10)))
 specs = [("all", 0)]
 for share, i in tqdm(specs):
-    model = ARDQN("MlpPolicy", env, aspiration, verbose=verbose, policy_kwargs=dict(shared_network=share))
+    model = ARDQN("MlpPolicy", env, aspiration, verbose=verbose, policy_kwargs=dict(shared_network=share), learning_starts=0)
     model.set_logger(tb_logger(path.join("ARDQN", share, str(i))))
-    model.learn(LEARNING_STEPS)  # , log_interval=10000000)
+    model.learn(LEARNING_STEPS, )  # , log_interval=10000000)
     models.append(model)
     model.name = f"{share}_{i}"
 plot = plot_ar(models, env=env)

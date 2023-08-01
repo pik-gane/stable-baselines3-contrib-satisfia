@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type, Union, Literal, Sequence
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Type, Union
+
 import numpy as np
 import torch as th
 from gymnasium import spaces
@@ -146,7 +147,6 @@ class ArDQNPolicy(ARQPolicy):
         lr_schedule: Schedule,
         initial_aspiration: float,
         gamma: float,
-        rho: float,
         shared_network: Literal["features_extractor", "all", "none", "minmax"] = "none",
         use_delta_nets: bool = True,
         net_arch: Optional[List[int]] = None,
@@ -163,7 +163,6 @@ class ArDQNPolicy(ARQPolicy):
             initial_aspiration,
             use_delta_nets,
             gamma=gamma,
-            rho=rho,
             features_extractor_class=features_extractor_class,
             features_extractor_kwargs=features_extractor_kwargs,
             optimizer_class=optimizer_class,
@@ -189,7 +188,6 @@ class ArDQNPolicy(ARQPolicy):
         }
         self.shared_network = shared_network
         self._build(lr_schedule, shared_network, use_delta_nets)
-
 
     def _build(self, lr_schedule: Schedule, shared_network, use_delta_nets) -> None:
         """
@@ -298,7 +296,6 @@ class ArDQNPolicy(ARQPolicy):
             polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), tau)
             polyak_update(self.hydra_net.parameters(), self.hydra_net_target.parameters(), tau)
 
-
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         data = super()._get_constructor_parameters()
 
@@ -345,7 +342,6 @@ class CnnPolicy(ArDQNPolicy):
         lr_schedule: Schedule,
         initial_aspiration: float,
         gamma: float,
-        rho: float,
         shared_network: Literal["features_extractor", "all", "none"] = "none",
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
@@ -361,7 +357,6 @@ class CnnPolicy(ArDQNPolicy):
             lr_schedule,
             initial_aspiration,
             gamma,
-            rho,
             shared_network=shared_network,
             net_arch=net_arch,
             activation_fn=activation_fn,
@@ -398,7 +393,6 @@ class MultiInputPolicy(ArDQNPolicy):
         lr_schedule: Schedule,
         initial_aspiration: float,
         gamma: float,
-        rho: float,
         shared_network: Literal["features_extractor", "all", "none"] = "none",
         net_arch: Optional[List[int]] = None,
         activation_fn: Type[nn.Module] = nn.ReLU,
@@ -414,7 +408,6 @@ class MultiInputPolicy(ArDQNPolicy):
             lr_schedule,
             initial_aspiration,
             gamma,
-            rho,
             shared_network=shared_network,
             net_arch=net_arch,
             activation_fn=activation_fn,

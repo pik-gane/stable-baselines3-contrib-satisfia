@@ -22,7 +22,6 @@ class ARQPolicy(BasePolicy):
         use_delta_predictor: bool,
         *,
         gamma,
-        rho,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -34,7 +33,6 @@ class ARQPolicy(BasePolicy):
         self.use_delta_predictor = use_delta_predictor
         self.aspiration: np.ndarray = np.array(initial_aspiration)
         self.gamma = gamma
-        self.rho = rho
 
     def _create_aliases(
         self,
@@ -98,7 +96,7 @@ class ARQPolicy(BasePolicy):
                         actions[i] = a_minus
         return actions
 
-    def rescale_aspiration(
+    def propagate_aspiration(
         self,
         obs: np.ndarray,
         actions: np.ndarray,
@@ -129,14 +127,18 @@ class ARQPolicy(BasePolicy):
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
             next_lambda[(q_max == q_min).squeeze(dim=1)] = 0.5
             # JOBST: caution, I fixed the variable naming in the following:
-            next_qs = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)  # this is a whole row of the Q table!
-            next_q = interpolate(next_qs.min(dim=1).values, next_lambda, next_qs.max(dim=1).values).cpu().numpy()  # this is NOT an aspiration value but the Q value we will aim for next. The difference between the actual next aspiration and this is probably what you called "aspiration diff" 
+            next_qs = (
+                self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
+            )  # this is a whole row of the Q table!
+            next_q = (
+                interpolate(next_qs.min(dim=1).values, next_lambda, next_qs.max(dim=1).values).cpu().numpy()
+            )  # this is NOT an aspiration value but the Q value we will aim for next. The difference between the actual next aspiration and this is probably what you called "aspiration diff"
             delta_hard = -rewards / self.gamma
             delta_soft = next_q - q.cpu().numpy() / self.gamma
             self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
 
             # Check that in the end, the expected value of reward + gamma * aspiration(new) equals aspiration(old):
-            # Equivalently, we want that 
+            # Equivalently, we want that
             # 0 = E(reward/gamma + aspiration(new) - self.aspiration(old)/gamma)
             #   = E(reward/gamma + interpolate(delta_hard, rho, delta_soft)
             #   = interpolate(E(reward/gamma + delta_hard), rho, E(reward/gamma + delta_soft))
@@ -176,16 +178,32 @@ class ARQPolicy(BasePolicy):
         return data
 
     def q_values(self, obs: np.ndarray, actions: Optional[np.ndarray] = None) -> th.Tensor:
+        """
+        Get the Q values for the given observations and actions. If actions is None, return the Q values for all
+        actions, otherwise return the Q values for the given actions only.
+
+        :param obs: the observations
+        :param actions: the actions
+        """
         if actions is None:
             return self.q_predictor(self.obs_to_tensor(obs)[0])
         else:
             t_actions = th.as_tensor(actions, device=self.device, dtype=th.long).unsqueeze(dim=1)
             return self.q_predictor(self.obs_to_tensor(obs)[0]).gather(1, t_actions).squeeze(dim=1)
 
-    def lambda_ratio(self, obs: np.ndarray, aspiration: Union[float, np.ndarray]) -> th.Tensor:
+    def lambda_ratio(self, obs: np.ndarray, aspirations: Union[float, np.ndarray]) -> th.Tensor:
+        """
+        Get the lambda ratio for the given observations and aspiration. The lambda ratio is clamped between 0 and 1.
+        Note: If the Q values are all equal, we set lambda to 0.5, (as this should not matter)
+
+        :param obs: the observations
+        :param aspirations: the aspirations
+
+        :return: the clamped lambda ratio between 0 and 1
+        """
         q = self.q_values(obs)
         q_min = q.min(dim=1).values
         q_max = q.max(dim=1).values
-        lambdas = ratio(q_min, th.tensor(aspiration, device=self.device), q_max)
+        lambdas = ratio(q_min, th.tensor(aspirations, device=self.device), q_max)
         lambdas[q_max == q_min] = 0.5  # If q_max == q_min, we set lambda to 0.5, this should not matter
-        return lambdas
+        return lambdas.clamp(min=0, max=1)

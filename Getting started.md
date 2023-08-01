@@ -109,5 +109,19 @@ The code is structured as follow:
 │       └── test_time_feature.py
 ```
 
+## Suggested tasks / ideas
+- [ ] Fix the tests that don't pass if I've not done it yet (I'd suggest not to start with that as it might be a bit tricky)
+- [ ] 
+
+## Notes
+- If you want to merge this repo in sb3-contrib, make a clean branch and :
+  - Follow the CONTRIBUTING.md guidelines
+  - remove the `experiments` folder and this `Getting started.md` file
+  - update the `README.md` and `setup.py`
+  - make sure that the AR-DQN tests pass
+  - revert my changes that disabled the tests of the other algorithms
+  - maybe separate the AR-DQN algorithm and the (AR) Q-learning algorithms in two different PR
+  - 
+
 ## Questions ? 
 Feel free to reach me out, I'm happy to help with this project.

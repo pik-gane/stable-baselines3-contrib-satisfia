@@ -1,6 +1,6 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Type, Union, List
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch as th
@@ -36,7 +36,7 @@ class ARQAlgorithm(ABC):
         # if type(policy) != str that means that the policy is being loaded from a saved model
         if policy_kwargs is None:
             policy_kwargs = {}
-        for kwarg in ["initial_aspiration", "gamma", "rho"]:
+        for kwarg in ["initial_aspiration", "gamma"]:
             if kwarg in policy_kwargs:
                 warnings.warn(
                     f"{kwarg} was passed to the policy kwargs, but it will be overwritten by the algorithm kwargs",
@@ -44,7 +44,6 @@ class ARQAlgorithm(ABC):
                 )
         policy_kwargs["initial_aspiration"] = initial_aspiration
         policy_kwargs["gamma"] = gamma
-        policy_kwargs["rho"] = rho
         super().__init__(*args, policy_kwargs=policy_kwargs, **kwargs)  # pytype: disable=wrong-arg-count
 
     def predict(
@@ -86,7 +85,7 @@ class ARQAlgorithm(ABC):
                 )
         return actions, None
 
-    def rescale_aspiration(
+    def propagate_aspiration(
         self,
         obs: np.ndarray,
         actions: np.ndarray,
@@ -104,7 +103,7 @@ class ARQAlgorithm(ABC):
         :param next_obs: observations at time t+1
         :param use_q_target: whether to use the Q-value or the target Q-value
         """
-        self.policy.rescale_aspiration(obs, actions, rewards, next_obs, use_q_target=use_q_target)
+        self.policy.propagate_aspiration(obs, actions, rewards, next_obs, use_q_target=use_q_target)
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
