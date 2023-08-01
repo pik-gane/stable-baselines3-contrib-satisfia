@@ -54,6 +54,8 @@ class ARDQN(ARQAlgorithm, DQN):
         is for aspiration rescaling. Default is 0.5. It can be a function
         of the current progress remaining (from 1 to 0)
     :param loss: The loss function to use (MSELoss or SmoothL1Loss)
+    :param q_min_max_targets: The way to compute the Q_min and Q_max targets. "Q" means that we use the target
+        Q_min/max values, "Delta" means that we use the target (Q - Q_min) and (Q_max - Q) values.
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -107,6 +109,7 @@ class ARDQN(ARQAlgorithm, DQN):
         gamma: float = 0.99,
         rho: Union[float, Schedule] = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "SmoothL1Loss",
+        q_min_max_targets: Literal["Q", "Delta"] = "Q",
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -157,6 +160,11 @@ class ARDQN(ARQAlgorithm, DQN):
             device=device,
             _init_setup_model=_init_setup_model,
         )
+        assert q_min_max_targets in [
+            "Delta",
+            "Q",
+        ], f"q_min_max_targets must be either 'Delta' or 'Q', not {q_min_max_targets}"
+        self.q_min_max_targets: Literal["Q", "Delta"] = q_min_max_targets
         self.mu = mu
         if loss in self.loss_aliases.keys():
             self.loss = self.loss_aliases[loss]()
@@ -217,21 +225,25 @@ class ARDQN(ARQAlgorithm, DQN):
         qmin_target: th.Tensor,
         qmax_target: th.Tensor,
     ):
-        current_q_values = self.q_net(obs)
-        current_delta_min, current_delta_max = self.delta_qmin_net(obs), self.delta_qmax_net(obs)
+        def take(qs):
+            return th.gather(qs, dim=1, index=actions)  # Retrieve the q-values for the actions from the replay buffer
 
-        # Retrieve the q-values for the actions from the replay buffer
-        current_q_values = th.gather(current_q_values, dim=1, index=actions)
-        # Detach the q-values, as we don't want to update them for the q_min/q_max loss
+        current_q_values = take(self.q_net(obs))
         q = current_q_values.detach()
-        current_q_min = q - th.gather(current_delta_min, dim=1, index=actions)
-        current_q_max = q + th.gather(current_delta_max, dim=1, index=actions)
+        current_delta_min, current_delta_max = take(self.delta_qmin_net(obs)), take(self.delta_qmax_net(obs))
+        # Detach the q-values, as we don't want to update the Q network for the q_min/q_max loss
+        if self.q_min_max_targets == "Q":
+            current_q_min = q - current_delta_min
+            current_q_max = q + current_delta_max
+            q_min_loss = self.loss(current_q_min, qmin_target)
+            q_max_loss = self.loss(current_q_max, qmax_target)
+        elif self.q_min_max_targets == "Delta":
+            delta_min_target = q_target - qmin_target
+            delta_max_target = qmax_target - q_target
+            q_min_loss = self.loss(current_delta_min, delta_min_target)
+            q_max_loss = self.loss(current_delta_max, delta_max_target)
 
-        # Compute Huber loss (less sensitive to outliers)
         q_loss = self.loss(current_q_values, q_target)
-        q_min_loss = self.loss(current_q_min, qmin_target)
-        q_max_loss = self.loss(current_q_max, qmax_target)
-
         # Optimize the policy
         self.policy.optimizer.zero_grad()
         # Backward all losses
