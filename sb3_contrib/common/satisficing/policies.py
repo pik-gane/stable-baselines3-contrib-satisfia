@@ -119,19 +119,39 @@ class ARQPolicy(BasePolicy):
         obs, next_obs = self.obs_to_tensor(obs)[0], self.obs_to_tensor(next_obs)[0]
         with th.no_grad():
             actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_target_predictor(obs) if use_q_target else self.q_predictor(obs), dim=1, index=actions)
-            qmin_predictor = self.delta_qmin_target_predictor if use_q_target else self.delta_qmin_predictor
-            qmax_predictor = self.delta_qmax_target_predictor if use_q_target else self.delta_qmax_predictor
-            q_min = q - th.gather(qmin_predictor(obs), 1, actions)
-            q_max = q + th.gather(qmax_predictor(obs), 1, actions)
+            q = th.gather(self.q_predictor(obs), dim=1, index=actions)
+            # JOBST: caution, I fixed the variable naming in the following:
+            delta_qmin_predictor = self.delta_qmin_target_predictor if use_q_target else self.delta_qmin_predictor
+            delta_qmax_predictor = self.delta_qmax_target_predictor if use_q_target else self.delta_qmax_predictor
+            q_min: th.Tensor = q - th.gather(delta_qmin_predictor(obs), 1, actions)
+            q_max = q + th.gather(delta_qmax_predictor(obs), 1, actions)
             next_lambda = ratio(q_min, q, q_max).squeeze(dim=1)
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
             next_lambda[(q_max == q_min).squeeze(dim=1)] = 0.5
-            next_q = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
-            next_aspiration = interpolate(next_q.min(dim=1).values, next_lambda, next_q.max(dim=1).values).cpu().numpy()
+            # JOBST: caution, I fixed the variable naming in the following:
+            next_qs = self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)  # this is a whole row of the Q table!
+            next_q = interpolate(next_qs.min(dim=1).values, next_lambda, next_qs.max(dim=1).values).cpu().numpy()  # this is NOT an aspiration value but the Q value we will aim for next. The difference between the actual next aspiration and this is probably what you called "aspiration diff"
             delta_hard = -rewards / self.gamma
-            delta_soft = next_aspiration - q.cpu().squeeze(dim=1).numpy() / self.gamma
+            delta_soft = next_q - q.cpu().numpy() / self.gamma
             self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
+
+            # Check that in the end, the expected value of reward + gamma * aspiration(new) equals aspiration(old):
+            # Equivalently, we want that
+            # 0 = E(reward/gamma + aspiration(new) - self.aspiration(old)/gamma)
+            #   = E(reward/gamma + interpolate(delta_hard, rho, delta_soft)
+            #   = interpolate(E(reward/gamma + delta_hard), rho, E(reward/gamma + delta_soft))
+            #   = interpolate(0, rho, E(reward/gamma + next_q - q/gamma))
+            #   = rho * (E(reward/gamma) + interpolate(E(next_qs.min), ratio(q_min, q, q_max), E(next_qs.max)) - q/gamma)
+            # Now we know that after the networks have been learned properly, we should have
+            #   q_min ~ E(reward) + gamma * E(next_qs.min),
+            #   q_max ~ E(reward) + gamma * E(next_qs.max),
+            #   q ~ E(reward) + gamma * E(next_q),
+            # so that
+            #   next_lambda ~ ratio(q_min, q, q_max) ~ ratio(E(next_qs.min), E(next_q), E(next_qs.max))
+            # hence we can rewrite the above as
+            #   0 ~ rho * (E(reward/gamma) + interpolate(E(next_qs.min), next_lambda, E(next_qs.max)) - q/gamma)
+            #     ~ rho * (E(reward/gamma) + E(next_q) - q/gamma)
+            #     = 0, QED.
 
     def reset_aspiration(self, dones: Optional[np.ndarray] = None) -> None:
         """
