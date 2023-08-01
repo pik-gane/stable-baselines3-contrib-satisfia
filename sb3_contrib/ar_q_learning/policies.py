@@ -47,8 +47,8 @@ class ARQLearningPolicy(ARQPolicy):
             observation_space,
             action_space,
             initial_aspiration,
+            use_delta_predictors=True,  # todo: remove this todo if we decide not to implement the Qmin and Qmax predictors
             gamma=gamma,
-            rho=rho,
         )
         self._create_aliases()
 

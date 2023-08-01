@@ -3,12 +3,11 @@ import time
 import warnings
 from typing import Any, Dict, List, Optional, Type, TypeVar, Union
 
-import numpy as np
 import torch as th
 from gymnasium.vector.utils import spaces
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import get_linear_fn, safe_mean
+from stable_baselines3.common.utils import get_linear_fn, safe_mean, get_schedule_fn
 
 from sb3_contrib.ar_q_learning.policies import ARQLearningPolicy, DeltaQTable, QTable
 from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm
@@ -39,7 +38,7 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
         learning_rate: Union[float, Schedule] = 0.1,
         mu: float = 0.5,
         gamma: float = 0.99,
-        rho: float = 0.5,
+        rho: Union[float, Schedule] = 0.5,
         exploration_fraction: float = 0.1,
         exploration_initial_eps: float = 1.0,
         exploration_final_eps: float = 0.05,
@@ -53,13 +52,15 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
     ) -> None:
         if initial_aspiration is None and isinstance(policy, str):
             raise ValueError("You must specify an initial aspiration for ARQLearning")
+        self.rho_schedule = get_schedule_fn(rho)
         super().__init__(
             initial_aspiration,
             policy,
             env,
             learning_rate,
             gamma=gamma,
-            rho=rho,
+            use_delta_predictors=True,  # todo? Not sure if it makes sense but we could add a parameter for
+            # this to allow training Qmin table instead of DeltaQmin table
             policy_kwargs=policy_kwargs,
             stats_window_size=stats_window_size,
             tensorboard_log=tensorboard_log,
@@ -93,6 +94,9 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
         self.set_random_seed(self.seed)
         self.policy = self.policy_class(self.observation_space, self.action_space, **self.policy_kwargs)
         self.policy = self.policy.to(self.device)
+        self.policy.rho = self.rho_schedule(1)
+        self.exploration_rate = self.exploration_schedule(1)
+        self.learning_rate = self.lr_schedule(1)
         self._create_aliases()
 
     def _create_aliases(self) -> None:
@@ -121,21 +125,19 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
         num_collected_steps, num_collected_episodes = 0, 0
         last_log_time = 0
         aspiration = self.policy.initial_aspiration
-        last_lambda = self.policy.lambda_ratio(obs, aspiration).clamp(min=0, max=1)
+        last_lambda = self.policy.lambda_ratio(obs, aspiration)
         while self.num_timesteps < total_timesteps:
             num_collected_steps += 1
             if self.verbose >= 2:
                 debug_len = len(f"==============Step {num_collected_steps}============\n")
                 print(f"==============Step {num_collected_steps}============\n")
-            self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
-            self.learning_rate = self.lr_schedule(self._current_progress_remaining)
             # Step
             actions, _ = self.predict(obs)
             new_obs, rewards, dones, infos = self.env.step(actions)
             if self.verbose >= 2:
                 print(f"I receive reward {float(rewards):.2f} and arrive in state {int(new_obs)}\n")
             with th.no_grad():
-                aspiration_diff = self.policy.aspiration - self.policy.q_values(obs, actions).cpu().numpy()
+                aspiration_diff = self.policy.aspiration - self.policy.get_q_values(obs, actions).cpu().numpy()
             self.propagate_aspiration(obs, actions, rewards, new_obs)
             self.reset_aspiration(dones)
             new_lambda = self.policy.lambda_ratio(new_obs, self.policy.aspiration).clamp(min=0, max=1)
@@ -174,23 +176,6 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
             smooth_lambda = th.as_tensor(smooth_lambda, device=self.device)
             actions = th.as_tensor(actions, device=self.device, dtype=th.long).unsqueeze(dim=1)
             self._learning_step(obst, actions, rewards, new_obs, dones, smooth_lambda)
-            # if self.verbose >= 2: todo remove
-            #     print()
-            #     if not dones.any():
-            #         print(
-            #             f"In state {int(new_obs)}, my v_min is {float(v_min):.2f} and my v_max is {float(v_max):.2f}\n"
-            #             f"My new_lambda is {float(new_lambda):.2f} and my smooth_lambda is {float(smooth_lambda):.2f}\n"
-            #             f"Therefore my v is {float(v):.2f} and my q_target is {float(q_target):.2f}\n"
-            #             f"My delta_qmin_target is {float(delta_qmin_target):.2f} and my delta_qmax_target is {float(delta_qmax_target):.2f}\n"
-            #         )
-            #     print(
-            #         f"\nNow I perform my update step:\n - q[{int(obs)}, {int(actions)}] = {float(q):.2f} + "
-            #         f"{float(learning_rate):.2f} * ({float(q_target):.2f} - {float(q):.2f}) = {float(q + learning_rate * (q_target - self.q_table(obs, actions))):.2g}\n"
-            #         f" - delta_qmin[{int(obs)}, {int(actions)}] = {float(self.policy.delta_qmin_table(obs, actions)):.2f} + "
-            #         f"{float(learning_rate):.2f} * ({float(delta_qmin_target):.2f} - {float(self.policy.delta_qmin_table(obs, actions)):.2f}) = {float(self.policy.delta_qmin_table(obs, actions) + learning_rate * (delta_qmin_target - self.policy.delta_qmin_table(obs, actions))):.2g}\n"
-            #         f" - delta_qmax[{int(obs)}, {int(actions)}] = {float(self.policy.delta_qmax_table(obs, actions)):.2f} + "
-            #         f"{float(learning_rate):.2f} * ({float(delta_qmax_target):.2f} - {float(self.policy.delta_qmax_table(obs, actions)):.2f}) = {float(self.policy.delta_qmax_table(obs, actions) + learning_rate * (delta_qmax_target - self.policy.delta_qmax_table(obs, actions))):.2g}"
-            #     )
             self._log_policy(obs, new_lambda, aspiration_diff)
             if self.verbose >= 2:
                 print("=" * debug_len + "\n")
@@ -207,6 +192,10 @@ class ARQLearning(ARQAlgorithm, BaseAlgorithm):
 
     def _on_step(self):
         self.num_timesteps += self.env.num_envs
+        self.policy.rho = self.rho_schedule(self._current_progress_remaining)
+        self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+        self.learning_rate = self.lr_schedule(self._current_progress_remaining)
+        self.logger.record("rollout/rho", self.policy.rho)
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
 
     def _dump_logs(self) -> None:
