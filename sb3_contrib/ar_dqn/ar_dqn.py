@@ -54,8 +54,9 @@ class ARDQN(ARQAlgorithm, DQN):
         is for aspiration rescaling. Default is 0.5. It can be a function
         of the current progress remaining (from 1 to 0)
     :param loss: The loss function to use (MSELoss or SmoothL1Loss)
-    :param q_min_max_targets: The way to compute the Q_min and Q_max targets. "Q" means that we use the target
+    :param q_min_max_target: The way to compute the Q_min and Q_max targets. "Q" means that we use the target
         Q_min/max values, "Delta" means that we use the target (Q - Q_min) and (Q_max - Q) values.
+    :param use_delta_nets: Whether to use delta_q_min/max or q_min/max networks
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -109,7 +110,8 @@ class ARDQN(ARQAlgorithm, DQN):
         gamma: float = 0.99,
         rho: Union[float, Schedule] = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "SmoothL1Loss",
-        q_min_max_targets: Literal["Q", "Delta"] = "Q",
+        q_min_max_target: Literal["Q", "Delta"] = "Q",
+        use_delta_nets: bool = True,
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -129,8 +131,17 @@ class ARDQN(ARQAlgorithm, DQN):
     ) -> None:
         if initial_aspiration is None and isinstance(policy, str):
             raise ValueError("You must specify an initial aspiration for AR DQN")
+        if policy_kwargs is None:
+            policy_kwargs = {}
+        if "use_delta_nets" in policy_kwargs:
+            warnings.warn(
+                f"use_delta_nets was passed to the policy kwargs, but it will be overwritten by the AR-DQN kwargs",
+                UserWarning,
+            )
+        policy_kwargs["use_delta_nets"] = use_delta_nets
+        self.rho_schedule = get_schedule_fn(rho)
+        self.use_delta_nets = use_delta_nets
         # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
-        self.rho = rho
         super().__init__(
             initial_aspiration,
             policy,
@@ -143,7 +154,7 @@ class ARDQN(ARQAlgorithm, DQN):
             train_freq=train_freq,
             gradient_steps=gradient_steps,
             gamma=gamma,
-            rho=rho,
+            use_delta_predictors=use_delta_nets,
             replay_buffer_class=SatisficingReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
@@ -160,11 +171,11 @@ class ARDQN(ARQAlgorithm, DQN):
             device=device,
             _init_setup_model=_init_setup_model,
         )
-        assert q_min_max_targets in [
+        assert q_min_max_target in [
             "Delta",
             "Q",
-        ], f"q_min_max_targets must be either 'Delta' or 'Q', not {q_min_max_targets}"
-        self.q_min_max_targets: Literal["Q", "Delta"] = q_min_max_targets
+        ], f"q_min_max_target must be either 'Delta' or 'Q', not {q_min_max_target}"
+        self.q_min_max_target = q_min_max_target
         self.mu = mu
         if loss in self.loss_aliases.keys():
             self.loss = self.loss_aliases[loss]()
@@ -174,14 +185,18 @@ class ARDQN(ARQAlgorithm, DQN):
             SatisficingDictReplayBuffer if isinstance(self.observation_space, spaces.Dict) else SatisficingReplayBuffer
         )
         super()._setup_model()
-        self.rho_schedule = get_schedule_fn(self.rho)
-        self.rho = self.rho_schedule(1)
-        self.policy.rho = self.rho
+        self.policy.rho = self.rho_schedule(1)
         # Copy running stats for delta networks, see GH issue #996
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
+        if self.use_delta_nets:
+            self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, ["running_"])
+            self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, ["running_"])
+        else:
+            self.batch_norm_stats += get_parameters_by_name(self.qmin_net, ["running_"])
+            self.batch_norm_stats += get_parameters_by_name(self.qmax_net, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.qmin_net_target, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.qmax_net_target, ["running_"])
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
@@ -189,6 +204,10 @@ class ARDQN(ARQAlgorithm, DQN):
         self.delta_qmin_net_target = self.policy.delta_qmin_net_target
         self.delta_qmax_net = self.policy.delta_qmax_net
         self.delta_qmax_net_target = self.policy.delta_qmax_net_target
+        self.qmin_net = self.policy.qmin_net
+        self.qmin_net_target = self.policy.qmin_net_target
+        self.qmax_net = self.policy.qmax_net
+        self.qmax_net_target = self.policy.qmax_net_target
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
@@ -226,22 +245,36 @@ class ARDQN(ARQAlgorithm, DQN):
         qmax_target: th.Tensor,
     ):
         def take(qs):
-            return th.gather(qs, dim=1, index=actions)  # Retrieve the q-values for the actions from the replay buffer
+            return th.gather(qs, dim=1, index=actions).squeeze(1)
 
         current_q_values = take(self.q_net(obs))
-        q = current_q_values.detach()
-        current_delta_min, current_delta_max = take(self.delta_qmin_net(obs)), take(self.delta_qmax_net(obs))
-        # Detach the q-values, as we don't want to update the Q network for the q_min/q_max loss
-        if self.q_min_max_targets == "Q":
-            current_q_min = q - current_delta_min
-            current_q_max = q + current_delta_max
-            q_min_loss = self.loss(current_q_min, qmin_target)
-            q_max_loss = self.loss(current_q_max, qmax_target)
-        elif self.q_min_max_targets == "Delta":
-            delta_min_target = q_target - qmin_target
-            delta_max_target = qmax_target - q_target
-            q_min_loss = self.loss(current_delta_min, delta_min_target)
-            q_max_loss = self.loss(current_delta_max, delta_max_target)
+        if self.use_delta_nets:
+            current_delta_min, current_delta_max = take(self.delta_qmin_net(obs)), take(self.delta_qmax_net(obs))
+            # Detach the q-values, as we don't want to update the Q network for the q_min/q_max loss
+            if self.q_min_max_target == "Q":
+                q = current_q_values.detach()
+                current_q_min = q - current_delta_min
+                current_q_max = q + current_delta_max
+                q_min_loss = self.loss(current_q_min, qmin_target)
+                q_max_loss = self.loss(current_q_max, qmax_target)
+            elif self.q_min_max_target == "Delta":
+                delta_min_target = q_target - qmin_target
+                delta_max_target = qmax_target - q_target
+                q_min_loss = self.loss(current_delta_min, delta_min_target)
+                q_max_loss = self.loss(current_delta_max, delta_max_target)
+        else:
+            current_q_min, current_q_max = take(self.qmin_net(obs)), take(self.qmax_net(obs))
+            if self.q_min_max_target == "Q":
+                q_min_loss = self.loss(current_q_min, qmin_target)
+                q_max_loss = self.loss(current_q_max, qmax_target)
+            elif self.q_min_max_target == "Delta":
+                q = current_q_values.detach()
+                delta_min_target = q_target - qmin_target
+                delta_max_target = qmax_target - q_target
+                current_delta_min = q - current_q_min
+                current_delta_max = current_q_max - q
+                q_min_loss = self.loss(current_delta_min, delta_min_target)
+                q_max_loss = self.loss(current_delta_max, delta_max_target)
 
         q_loss = self.loss(current_q_values, q_target)
         # Optimize the policy
@@ -309,7 +342,7 @@ class ARDQN(ARQAlgorithm, DQN):
                 aspiration_diff = aspiration_diff = (
                     self.policy.aspiration
                     - np.take_along_axis(
-                        self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                        self.policy.get_q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
                     ).squeeze(1)
                 ).mean()
                 self.propagate_aspiration(
@@ -471,8 +504,8 @@ class ARDQN(ARQAlgorithm, DQN):
             # Copy running stats, see GH issue #996
             polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
         self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
-        self.policy.rho = self.rho_schedule(self._current_progress_remaining)
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
+        self.policy.rho = self.rho_schedule(self._current_progress_remaining)
         self.logger.record("rollout/rho", self.policy.rho)
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:

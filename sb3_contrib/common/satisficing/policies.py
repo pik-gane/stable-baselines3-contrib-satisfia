@@ -19,7 +19,7 @@ class ARQPolicy(BasePolicy):
         observation_space: spaces.Space,
         action_space: spaces.Discrete,
         initial_aspiration: float,
-        use_delta_predictor: bool,
+        use_delta_predictors: bool,
         *,
         gamma,
         **kwargs,
@@ -29,8 +29,8 @@ class ARQPolicy(BasePolicy):
             action_space,
             **kwargs,
         )
+        self.use_delta_predictors = use_delta_predictors
         self.initial_aspiration = initial_aspiration
-        self.use_delta_predictor = use_delta_predictor
         self.aspiration: np.ndarray = np.array(initial_aspiration)
         self.gamma = gamma
 
@@ -38,19 +38,23 @@ class ARQPolicy(BasePolicy):
         self,
         q_predictor: BaseModel,
         q_target_predictor: BaseModel,
-        delta_qmin_predictor: BaseModel,
-        delta_qmin_target_predictor: BaseModel,
-        delta_qmax_predictor: BaseModel,
-        delta_qmax_target_predictor: BaseModel,
+        qmin_predictor: BaseModel,
+        qmin_target_predictor: BaseModel,
+        qmax_predictor: BaseModel,
+        qmax_target_predictor: BaseModel,
     ) -> None:
         # We need to create aliases because the predictors are not available at init time
-        # They are stored as lambda functions to avoid self.q_predictor to be counted in policy.parameters()
+        # They are stored as lambda functions to avoid self.q_predictor,... to be counted in policy.parameters()
         self.q_predictor = lambda obs: q_predictor(obs)
         self.q_target_predictor = lambda obs: q_target_predictor(obs)
-        self.delta_qmin_predictor = lambda obs: delta_qmin_predictor(obs)
-        self.delta_qmin_target_predictor = lambda obs: delta_qmin_target_predictor(obs)
-        self.delta_qmax_predictor = lambda obs: delta_qmax_predictor(obs)
-        self.delta_qmax_target_predictor = lambda obs: delta_qmax_target_predictor(obs)
+        self.delta_qmin_predictor = (lambda obs: qmin_predictor(obs)) if self.use_delta_predictors else None
+        self.delta_qmin_target_predictor = (lambda obs: qmin_target_predictor(obs)) if self.use_delta_predictors else None
+        self.delta_qmax_predictor = (lambda obs: qmax_predictor(obs)) if self.use_delta_predictors else None
+        self.delta_qmax_target_predictor = (lambda obs: qmax_target_predictor(obs)) if self.use_delta_predictors else None
+        self.qmin_predictor = (lambda obs: qmin_predictor(obs)) if not self.use_delta_predictors else None
+        self.qmin_target_predictor = (lambda obs: qmin_target_predictor(obs)) if not self.use_delta_predictors else None
+        self.qmax_predictor = (lambda obs: qmax_predictor(obs)) if not self.use_delta_predictors else None
+        self.qmax_target_predictor = (lambda obs: qmax_target_predictor(obs)) if not self.use_delta_predictors else None
 
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values_batch = self.q_predictor(obs)
@@ -102,7 +106,6 @@ class ARQPolicy(BasePolicy):
         actions: np.ndarray,
         rewards: np.ndarray,
         next_obs: np.ndarray,
-        use_q_target,
     ) -> None:
         """
         Rescale the aspiration so that, **in expectation**, the agent will
@@ -112,27 +115,18 @@ class ARQPolicy(BasePolicy):
         :param actions: actions at time t
         :param rewards: rewards at time t
         :param next_obs: observations at time t+1
-        :param use_q_target: whether to use the Q-value or the target Q-value
         """
         obs, next_obs = self.obs_to_tensor(obs)[0], self.obs_to_tensor(next_obs)[0]
         with th.no_grad():
             actions = th.as_tensor(actions, device=self.device, dtype=th.int64).unsqueeze(dim=1)
-            q = th.gather(self.q_predictor(obs), dim=1, index=actions)
-            # JOBST: caution, I fixed the variable naming in the following:
-            delta_qmin_predictor = self.delta_qmin_target_predictor if use_q_target else self.delta_qmin_predictor
-            delta_qmax_predictor = self.delta_qmax_target_predictor if use_q_target else self.delta_qmax_predictor
-            q_min: th.Tensor = q - th.gather(delta_qmin_predictor(obs), 1, actions)
-            q_max = q + th.gather(delta_qmax_predictor(obs), 1, actions)
-            next_lambda = ratio(q_min, q, q_max).squeeze(dim=1)
+            q = self.q_values(obs, actions=actions)
+            q_min = self.qmin_values(obs, actions=actions)
+            q_max = self.qmax_values(obs, actions=actions)
+            next_lambda = ratio(q_min, q, q_max)
             # If q_max == q_min, we arbitrary set lambda to 0.5 as this should not matter
-            next_lambda[(q_max == q_min).squeeze(dim=1)] = 0.5
-            # JOBST: caution, I fixed the variable naming in the following:
-            next_qs = (
-                self.q_target_predictor(next_obs) if use_q_target else self.q_predictor(next_obs)
-            )  # this is a whole row of the Q table!
-            next_q = (
-                interpolate(next_qs.min(dim=1).values, next_lambda, next_qs.max(dim=1).values).cpu().numpy()
-            )  # this is NOT an aspiration value but the Q value we will aim for next. The difference between the actual next aspiration and this is probably what you called "aspiration diff"
+            next_lambda[(q_max == q_min)] = 0.5
+            next_qs = self.q_predictor(next_obs)
+            next_q = interpolate(next_qs.min(dim=1).values, next_lambda, next_qs.max(dim=1).values).cpu().numpy()
             delta_hard = -rewards / self.gamma
             delta_soft = next_q - q.cpu().numpy() / self.gamma
             self.aspiration = self.aspiration / self.gamma + interpolate(delta_hard, self.rho, delta_soft)
@@ -177,7 +171,7 @@ class ARQPolicy(BasePolicy):
         )
         return data
 
-    def q_values(self, obs: np.ndarray, actions: Optional[np.ndarray] = None) -> th.Tensor:
+    def get_q_values(self, obs: np.ndarray, actions: Optional[np.ndarray] = None) -> th.Tensor:
         """
         Get the Q values for the given observations and actions. If actions is None, return the Q values for all
         actions, otherwise return the Q values for the given actions only.
@@ -191,6 +185,48 @@ class ARQPolicy(BasePolicy):
             t_actions = th.as_tensor(actions, device=self.device, dtype=th.long).unsqueeze(dim=1)
             return self.q_predictor(self.obs_to_tensor(obs)[0]).gather(1, t_actions).squeeze(dim=1)
 
+    def qmin_values(self, obs: th.Tensor, use_target: bool = False, actions: Optional[th.Tensor] = None) -> th.Tensor:
+        if self.use_delta_predictors:
+            if use_target:
+                qmin = self.q_target_predictor(obs) - self.delta_qmin_target_predictor(obs)
+            else:
+                qmin = self.q_predictor(obs) - self.delta_qmin_predictor(obs)
+        else:
+            if use_target:
+                qmin = self.qmin_target_predictor(obs)
+            else:
+                qmin = self.qmin_predictor(obs)
+        if actions is None:
+            return qmin
+        else:
+            return qmin.gather(1, actions).squeeze(dim=1)
+
+    def qmax_values(self, obs: th.Tensor, use_target: bool = False, actions: Optional[th.Tensor] = None) -> th.Tensor:
+        if self.use_delta_predictors:
+            if use_target:
+                qmax = self.q_target_predictor(obs) + self.delta_qmax_target_predictor(obs)
+            else:
+                qmax = self.q_predictor(obs) + self.delta_qmax_predictor(obs)
+        else:
+            if use_target:
+                qmax = self.qmax_target_predictor(obs)
+            else:
+                qmax = self.qmax_predictor(obs)
+        if actions is None:
+            return qmax
+        else:
+            return qmax.gather(1, actions).squeeze(dim=1)
+
+    def q_values(self, obs: th.Tensor, use_target: bool = False, actions: Optional[th.Tensor] = None) -> th.Tensor:
+        if use_target:
+            q = self.q_target_predictor(obs)
+        else:
+            q = self.q_predictor(obs)
+        if actions is None:
+            return q
+        else:
+            return q.gather(1, actions).squeeze(dim=1)
+
     def lambda_ratio(self, obs: np.ndarray, aspirations: Union[float, np.ndarray]) -> th.Tensor:
         """
         Get the lambda ratio for the given observations and aspiration. The lambda ratio is clamped between 0 and 1.
@@ -201,7 +237,7 @@ class ARQPolicy(BasePolicy):
 
         :return: the clamped lambda ratio between 0 and 1
         """
-        q = self.q_values(obs)
+        q = self.get_q_values(obs)
         q_min = q.min(dim=1).values
         q_max = q.max(dim=1).values
         lambdas = ratio(q_min, th.tensor(aspirations, device=self.device), q_max)
