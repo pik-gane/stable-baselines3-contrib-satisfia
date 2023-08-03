@@ -45,7 +45,7 @@ def submit_job_array(
     wandb_sync=False,
 ):
     """
-    Submit a job array to the cluster. 
+    Submit a job array to the cluster.
     A job array is a job that will run n_jobs times the same command. Each worker will be able to access its index in the array with `os.environ["SLURM_ARRAY_TASK_ID"]`.
     The job array will be named `experiment_name` and the logs will be saved in {work_dir}/logs/slurm/{experiment_name.out}.
     If post_python_file is not None, a job will be submitted after the array job is finished. This job will have a dependency on the array job.
@@ -77,12 +77,12 @@ def submit_job_array(
         .replace(JOB_NAME, experiment_name)
         .replace(WORK_DIR, work_dir)
     )
-    script_file = f"./logs/array_{experiment_name}.sh"
+    script_file = path.join(dirname, "logs", f"array_{experiment_name}.sh")
     with open(script_file, "w") as f:
         f.write(text)
     if not testing:
         output = subprocess.run(["sbatch", "--parsable", script_file], capture_output=True, text=True)
-        print(f"Job {output} submitted! Script file is at: {script_file}. Log file is at: ./slurm/logs/{experiment_name}.out")
+        print(f"Job {output} submitted! Script file is at: {script_file}. Log file is at: ./logs/slurm/{experiment_name}.out")
     else:
         output = None
     if post_python_file:
@@ -99,12 +99,12 @@ def submit_job_array(
             text = f.read()
         text = (
             text.replace(COMMAND_PLACEHOLDER, f"python3 {post_python_file} {dict_to_str_args(post_args)}")
-            .replace(ARRAY_SIZE, str(0))
+            .replace(ARRAY_SIZE, "0") # We only want one job
             .replace(DEPENDENCY, f"#SBATCH --dependency=afterok:{job_id}")
             .replace(JOB_NAME, f"post_{experiment_name}")
             .replace(WORK_DIR, work_dir)
         )
-        script_file = f"./logs/post_{experiment_name}.sh"
+        script_file = path.join(dirname, "logs", f"post_{experiment_name}.sh")
         with open(script_file, "w") as f:
             f.write(text)
         if not testing:
@@ -120,8 +120,8 @@ def submit_job_array(
                         "--qos=io",
                         "-D",
                         work_dir,
-                        f"--output=./slurm/logs/{experiment_name}wandb.out",
-                        f"--error=./slurm/logs/{experiment_name}wandb.err",
+                        f"--output=./logs/slurm/{experiment_name}wandb.out",
+                        f"--error=./logs/slurm/{experiment_name}wandb.err",
                         "-J",
                         f"wandb_{experiment_name}",
                         "--dependency",
