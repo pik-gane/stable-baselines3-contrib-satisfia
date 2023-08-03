@@ -33,7 +33,6 @@ class ARQAlgorithm(ABC):
         policy_kwargs: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> None:
-        # if type(policy) != str that means that the policy is being loaded from a saved model
         if policy_kwargs is None:
             policy_kwargs = {}
         for kwarg in ["initial_aspiration", "gamma"]:

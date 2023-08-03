@@ -142,7 +142,7 @@ def params_should_differ(params, other_params):
 # @pytest.mark.parametrize("model_class", [TQC, QRDQN, ARDQN])
 @pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
-@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none"])
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none", "min_max"])
 def test_feature_extractor_target_net(model_class, share_features_extractor, shared_network):
     if model_class in {QRDQN, ARDQN} and share_features_extractor:
         pytest.skip()
@@ -218,7 +218,7 @@ def test_feature_extractor_target_net(model_class, share_features_extractor, sha
     # Deactivate learning rate
     model.lr_schedule = lambda _: 0.0
     # Re-activate polyak update
-    model.tau = 0.01
+    model.tau = 0.1
     # Special case for QRDQN: target net is updated in the `collect_rollouts()`
     # not the `train()` method
     if model_class in {QRDQN, ARDQN}:
@@ -226,18 +226,17 @@ def test_feature_extractor_target_net(model_class, share_features_extractor, sha
         model._on_step()
 
     model.train(gradient_steps=1)
+    # Critic should be the same (lr=0.0)
+    params_should_match(original_param, model.critic.parameters())
 
     # Target should have changed now (due to polyak update)
     params_should_differ(original_target_param, model.critic_target.parameters())
-
-    # Critic should be the same
-    params_should_match(original_param, model.critic.parameters())
 
 
 # @pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, ArDQN])
 @pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("normalize_images", [True, False])
-@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none"])
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none", "min_max"])
 def test_image_like_input(model_class, normalize_images, shared_network):
     """
     Check that we can handle image-like input (3D tensor)

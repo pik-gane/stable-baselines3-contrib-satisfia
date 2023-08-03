@@ -304,7 +304,6 @@ class ArDQNPolicy(ARQPolicy):
         return self._update_features_extractor(self.net_args, features_extractor=None)
 
     def make_q_net(self) -> QNetwork:
-        # Make sure we always have separate networks for features extractors etc
         return QNetwork(**self.get_net_args()).to(self.device)
 
     def make_q_nets(self) -> Tuple[QNetwork, QNetwork]:

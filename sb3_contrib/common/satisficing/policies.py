@@ -58,10 +58,10 @@ class ARQPolicy(BasePolicy):
 
     def _predict(self, obs: th.Tensor, deterministic: bool = True) -> th.Tensor:
         q_values_batch = self.q_predictor(obs)
-        actions = th.zeros(len(obs), dtype=th.int)
         aspirations = th.as_tensor(self.aspiration, device=self.device).squeeze()
         # todo?: using a for loop may be crappy, if it's too slow, we could rewrite this using pytorch
         batch_size = len(list(obs.values())[0]) if isinstance(obs, dict) else len(obs)
+        actions = th.zeros(batch_size, dtype=th.int, device=self.device)
         for i in range(batch_size):
             q_values: th.Tensor = q_values_batch[i]
             if aspirations.dim() > 0:
@@ -165,7 +165,6 @@ class ARQPolicy(BasePolicy):
         data.update(
             dict(
                 initial_aspiration=self.initial_aspiration,
-                rho=self.rho,
                 gamma=self.gamma,
             )
         )

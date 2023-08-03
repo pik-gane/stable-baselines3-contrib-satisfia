@@ -312,7 +312,7 @@ def test_predict_with_dropout_batch_norm(model_class, env_id):
 
 
 @pytest.mark.parametrize("env_id", ["CartPole-v1"])
-@pytest.mark.parametrize("shared_network", ["all", "none", "features_extractor"])
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none", "min_max"])
 def test_ardqn_predict_with_dropout_batch_norm(env_id, shared_network):
     model_kwargs = dict(seed=1, learning_starts=0)
     clone_helper = CLONE_HELPERS[ARDQN]
