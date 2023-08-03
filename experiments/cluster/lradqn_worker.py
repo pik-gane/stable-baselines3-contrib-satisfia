@@ -32,7 +32,7 @@ if __name__ == "__main__":
     if task_id >= len(args.lras):
         # Run DQN instead
         policy = args.policies[task_id]
-        model = DQN(policy, env, verbose=0)
+        model = DQN(policy, env, verbose=0, learning_starts=1000)
         # Setup logger
         log_path = path.join(args.log_path, "DQN")
         tb_logger = configure(log_path, ["tensorboard"])
@@ -85,4 +85,4 @@ if __name__ == "__main__":
                 f.write(f"learning_steps: {model.num_timesteps}\n")
         # Evaluate model and save results in a pickle file
         with open(path.join(log_path, "results.pkl"), "wb") as f:
-            pickle.dump(evaluate_policy(model, env, n_eval_episodes=args.n_eval_episodes), f)
+            pickle.dump(evaluate_policy(model, env, n_eval_episodes=args.n_eval_episodes, deterministic=False), f)

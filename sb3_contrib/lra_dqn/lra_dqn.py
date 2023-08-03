@@ -1,4 +1,4 @@
-from typing import Union, Type, Optional, Tuple, Dict, Any
+from typing import Any, Dict, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch as th
@@ -10,7 +10,7 @@ from stable_baselines3.common.type_aliases import GymEnv, Schedule
 from stable_baselines3.dqn.policies import QNetwork
 
 from sb3_contrib.common.satisficing.utils import interpolate
-from sb3_contrib.lra_dqn.policies import LRADQNPolicy, MlpPolicy, CnnPolicy, MultiInputPolicy
+from sb3_contrib.lra_dqn.policies import CnnPolicy, LRADQNPolicy, MlpPolicy, MultiInputPolicy
 
 
 class LRADQN(DQN):
@@ -103,9 +103,9 @@ class LRADQN(DQN):
             raise ValueError("local_relative_aspiration must be specified in LRA-DQN unless it is loaded from file")
         if policy_kwargs is None:
             policy_kwargs = {}
-        if 'local_relative_aspiration' in policy_kwargs.keys():
+        if "local_relative_aspiration" in policy_kwargs.keys():
             raise ValueError("local_relative_aspiration should not be in policy_kwargs, it is a parameter of LRADQN")
-        policy_kwargs['local_relative_aspiration'] = local_relative_aspiration
+        policy_kwargs["local_relative_aspiration"] = local_relative_aspiration
         super().__init__(
             policy,
             env,

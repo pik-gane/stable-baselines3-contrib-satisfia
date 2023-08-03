@@ -127,6 +127,6 @@ def submit_job_array(
                         "--dependency",
                         f"afterok:{job_id}",
                         "--wrap",
-                        f'"wandb sync {args["log_path"]}"',
+                        f'"wandb sync ./{args["log_path"]}"',
                     ]
                 )

@@ -3,14 +3,9 @@ from typing import Any, Dict, List, Optional, Type
 import numpy as np
 import torch as th
 from gymnasium import spaces
-from stable_baselines3.common.torch_layers import (
-    BaseFeaturesExtractor,
-    CombinedExtractor,
-    FlattenExtractor,
-    NatureCNN,
-)
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor, CombinedExtractor, FlattenExtractor, NatureCNN
 from stable_baselines3.common.type_aliases import Schedule
-from stable_baselines3.dqn.policies import QNetwork, DQNPolicy
+from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from torch import nn
 
 from sb3_contrib.common.satisficing.utils import interpolate, ratio
