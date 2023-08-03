@@ -26,6 +26,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--names", nargs="+", type=str, required=True)
     parser.add_argument("--log_path", type=str, required=True)
+    parser.add_argument("--expected_time_steps", type=int, required=True)
+
 
     args = parser.parse_args()
     models = []
