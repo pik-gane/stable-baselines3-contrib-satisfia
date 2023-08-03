@@ -129,6 +129,7 @@ class ARDQN(ARQAlgorithm, DQN):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ) -> None:
+        # if not isinstance(policy, str) that means that the policy is being loaded from a saved model
         if initial_aspiration is None and isinstance(policy, str):
             raise ValueError("You must specify an initial aspiration for AR DQN")
         if policy_kwargs is None:

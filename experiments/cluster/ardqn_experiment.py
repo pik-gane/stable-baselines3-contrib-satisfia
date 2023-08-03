@@ -49,7 +49,7 @@ if __name__ == "__main__":
         worker_args,
         nb_exp,
         EXPERIMENT_NAME + "_" + ENV_ID,
-        post_python_file="post_experiment_pickle.py",
+        post_python_file="ardqn_post_experiment.py",
         post_args=post_args,
         testing=False,
         wandb_sync=True,

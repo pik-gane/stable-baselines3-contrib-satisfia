@@ -24,7 +24,6 @@ if __name__ == "__main__":
     parser.add_argument("--names", nargs="+", type=str, required=True)
     parser.add_argument("--log_path", type=str, required=True)
     args = parser.parse_args()
-    env = ENV_DICT[args.env_id]()
     models = list(
         map(
             load_model,

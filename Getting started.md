@@ -86,8 +86,7 @@ The code is structured as follow:
 │   │   ├── ardqn_experiment.py
 │   │   ├── ardqn_worker.py
 │   │   ├── array_template.sh
-│   │   ├── post_experiment_pickle.py
-│   │   ├── post_experiment.py
+│   │   ├── ardqn_post_experiment.py
 │   │   ├── slurm.py
 │   │   └── slurm-template.sh
 │   ├── custom_envs.py  # Some custom envs
@@ -176,16 +175,14 @@ Hyperparameters shared with DQN:
   Also it would be useful to make it interactive using dash to e.g filter curves with regex patterns. I did a toy
   example
   of such regex filter app [here](https://pastebin.com/Nkk3V2PM).
-- [ ] Add some tests for the AR-Q-learning algorithm
+- [ ] Add some tests for the AR-Q-learning algorithm and LRA
 
 ## Suggested tasks / ideas
 
-- [ ] Implement the LRA (Local Relative Aspiration) based Q learning / DQN (i.e fixed lambda).
-  hint: you could do it by doing a super class of AR-DQN / AR-Q-learning and overriding the propagate_aspiration
-  function.
-  or by doing the same but for the AR-DQN / AR-Q-learning policy classes.
-- [ ] Fix the tests that don't pass if I've not done it yet (I'd suggest not to start with that as it might be a bit
-  tricky)
+- [ ] Implement the LRA (Local Relative Aspiration) based Q learning algorithm. It should be a good first task as 
+   it'll be similar to what I did with the LRA-DQN
+- [ ] Fix the `test_save_load` for AR-DQN when `shared_network` is either `all` or `min_max`. I think the error 
+comes from the fact that parameters are included multiple times, but I'm not sure if it's a problem in practice.
 - [ ] Try some hyperparameter optimization on the AR-DQN parameters and try to find the parameters that really matter
 
 ## Notes

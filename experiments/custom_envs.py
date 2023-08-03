@@ -3,7 +3,7 @@ from typing import Optional, Any
 
 import pygame
 from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper, RGBImgObsWrapper
-from experiments.public_good_envs import IteratedPD
+from public_good_envs import IteratedPD
 
 try:
     from typing import Literal
