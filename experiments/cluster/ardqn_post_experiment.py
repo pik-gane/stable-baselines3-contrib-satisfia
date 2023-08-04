@@ -1,10 +1,9 @@
 import argparse
+import pickle
 from os import path
 
-from experiments.custom_envs import ENV_DICT
 from sb3_contrib import ARDQN
 from sb3_contrib.common.satisficing.evaluation import plot_ar
-import pickle
 
 
 def load_model(log_path, name):

@@ -67,7 +67,8 @@ the `./experiments/cluster/ardqn_worker.py` script. Check the docstring of `subm
 
 For now, scalar logs are collected with [`tensorboard`](https://www.tensorflow.org/tensorboard) and stored
 in `./experiments/logs/{experiment_name}`. You can run `tensorboard --logdir ./experiments/logs/{experiment_name}` to
-visualize them. You can upload them using either `wandb sync ./experiments/logs/{experiment_name}`
+visualize them. After logging in `wandb` / `tensorboard` (see there doc for more info), you can upload them using
+either `wandb sync ./experiments/logs/{experiment_name}`
 or `tensorboard dev upload --logdir ./experiments/logs/{experiment_name}`. The first one will upload the logs to wandb
 and the second one to tensorboard.dev. I've used wandb until it stopped working for me, so I switched to
 tensorboard.dev. Also, it seems like we can't run the tensorboard visualization on the cluster, so you'll have to
@@ -83,15 +84,16 @@ The code is structured as follow:
 ├── experiments 
 │   ├── # Some stuff to test the code (not important)
 │   ├── cluster  # Cluster related experiments
-│   │   ├── ardqn_experiment.py
-│   │   ├── ardqn_worker.py
-│   │   ├── array_template.sh
-│   │   ├── ardqn_post_experiment.py
-│   │   ├── slurm.py
-│   │   └── slurm-template.sh
+│   │   ├── ardqn_experiment.py  # ARDQN experiment: submit a job array to run ardqn_worker.py
+│   │   ├── ardqn_worker.py  # ARDQN worker: run an instance of ardqn
+│   │   ├── ardqn_post_experiment.py  # ARDQN post experiment: analyze the results of ardqn_experiment.py
+│   │   ├── ...  # Other experiments
+│   │   ├── array_template.sh  # Template file filled by submit_job_array
+│   │   └── slurm.py  # Interface to submit jobs to slurm
 │   ├── custom_envs.py  # Some custom envs
-│   ├── public_good_envs  # Jobst env on iterated Prisoner Dilemna
-│   │   └── iterated_pd.py
+│   ├── public_good_envs  # Jobst envs
+│   │   ├── public_good.py  # A public good game with linear benefits and quadratic individual costs shared proportionally
+│   │   └── iterated_pd.py  # Iterated prisoner's dilemma
 │   └── utils.py  # Some ways to open tensorboard from code and a callback to Make DQN tensorboard similar to AR-DQN
 ├── sb3_contrib  # Library directory
 │   ├── ar_dqn  # Modified version of DQN derived from common.satisficing
@@ -108,9 +110,9 @@ The code is structured as follow:
 │   │   │   ├── type_aliases.py
 │   │   │   ├── algorithms.py  # Implements the update function / log function and predict function
 │   │   │   ├── buffers.py  # Add the lambda storage
-│   │   │   ├── evaluation.py  # Evaluate the satisficing policy by performing aspiration rescaling between each steps. Also contains a plt_ar function to plot some results
+│   │   │   ├── evaluation.py  # Evaluate the satisficing policy by performing aspiration rescaling between each steps. Also contains a plot_ar function to plot some results
 │   │   │   ├── policies.py  #  Implements rescale aspiration
-│   │   │   └── utils.py  # Contains the x:y:z and x/y/z operators
+│   │   │   └── utils.py  # Contains the x:y:z and x/y/z operators and a decorator for gathering Q values with actions.
 │   │   ├── wrappers
 │   │   │   ├── ...
 │   │   │   └── time_feature.py  # Might be useful to add time to the agent observation. I also have my own implementation but maybe this one is better
@@ -119,22 +121,9 @@ The code is structured as follow:
 ├── scripts
 │   └── run_tests.sh  # Useful to check your code
 ├── setup.py
-├── tests  # A folder containing tests that you can run to check if you didn't break anything. Disclaimer: I mostly just adapted existing test to ARDQN. 
-│   │      # I also disabled the tests of the other algorithms to speed up the test. As I'm writing those lines there are still some tests that don't pass :)
-│   ├── test_cnn.py
-│   ├── test_deterministic.py
-│   ├── test_dict_env.py
-│   ├── test_distributions.py
-│   ├── test_identity.py
-│   ├── test_invalid_actions.py
-│   ├── test_lstm.py
-│   ├── test_run.py
-│   ├── test_save_load.py
-│   ├── test_train_eval_mode.py
-│   ├── test_utils.py
-│   └── wrappers
-│       ├── test_action_masker.py
-│       └── test_time_feature.py
+└── tests  # A folder containing tests that you can run to check if you didn't break anything. Disclaimer: I mostly just adapted existing test to ARDQN. 
+    │      # I also disabled the tests of the other algorithms to speed up the test. As I'm writing those lines there are still some tests that don't pass :)
+    └── ...
 ```
 
 ## AR-DQN parameters
@@ -165,28 +154,33 @@ Hyperparameters shared with DQN:
 - `target_network_update_freq`
 - `gamma`
 
+## Suggested tasks / ideas
+
+- [ ] Add a training procedure for LRAR-DQN. For now it's using pretrained LRA-DQN Q network, but it would be great to
+  improve those Q networks on the actual LRAR-DQN trajectories. I think you'd have to make inherit from the DQN class.
+
 ## Tasks that I didn't have time to do but I though might be useful (feel free to do them if you want)
 
 - [ ] Test the iterated prisoner dilemna envs
 - [ ] Implement and test the Jobst snooker env
 - [ ] Make the plot_ar function in `sb3_contrib/common/satisficing/evaluation.py` more generic, so that you can
   partition the models based on arbitrary parameters (for now it's only "performance as a function of
-  mu/rho/aspiration").
+  mu/rho/aspiration"). This could be done by using pandas dataframes
   Also it would be useful to make it interactive using dash to e.g filter curves with regex patterns. I did a toy
   example
   of such regex filter app [here](https://pastebin.com/Nkk3V2PM).
 - [ ] Add some tests for the AR-Q-learning algorithm and LRA
-
-## Suggested tasks / ideas
-
-- [ ] Implement the LRA (Local Relative Aspiration) based Q learning algorithm. It should be a good first task as 
-   it'll be similar to what I did with the LRA-DQN
-- [ ] Fix the `test_save_load` for AR-DQN when `shared_network` is either `all` or `min_max`. I think the error 
-comes from the fact that parameters are included multiple times, but I'm not sure if it's a problem in practice.
+- [ ] Optimize the code of the algorithms to make it faster. I mainly focus on making the code readable but I think
+  there is still some room for optimization.
+- [ ] Fix the `test_save_load` for AR-DQN when `shared_network` is either `all` or `min_max`. I think the error
+  comes from the fact that parameters are included multiple times, but I'm not sure if it's a problem in practice.
 - [ ] Try some hyperparameter optimization on the AR-DQN parameters and try to find the parameters that really matter
 
 ## Notes
 
+- Before launching a cluster experiment, try it on a small number of workers. At the beginning I made some 500 workers
+  experiments that ran for 3 minutes because there was a syntax error in my code. The problem is that, after that,
+  the cluster was way longer to give me access to resources.
 - If you want to merge this repo in sb3-contrib, make a clean branch and :
     - Follow the CONTRIBUTING.md guidelines
     - remove the `experiments` folder and this `Getting started.md` file

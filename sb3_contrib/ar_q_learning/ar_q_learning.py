@@ -7,7 +7,7 @@ import torch as th
 from gymnasium.vector.utils import spaces
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import get_linear_fn, safe_mean, get_schedule_fn
+from stable_baselines3.common.utils import get_linear_fn, get_schedule_fn, safe_mean
 
 from sb3_contrib.ar_q_learning.policies import ARQLearningPolicy, DeltaQTable, QTable
 from sb3_contrib.common.satisficing.algorithms import ARQAlgorithm

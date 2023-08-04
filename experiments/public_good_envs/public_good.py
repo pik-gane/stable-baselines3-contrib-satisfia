@@ -3,6 +3,7 @@ from typing import Literal
 
 from gymnasium import Env, spaces
 
+
 class PublicGood(Env):
     """A public good game with linear benefits and quadratic individual costs shared proportionally.
     action = quantity q1 of public good to contribute by the agent (=player 1).
@@ -40,8 +41,8 @@ class PublicGood(Env):
         sigma: float = 1,
     ):
         super().__init__()
-        self.action_space = spaces.Discrete(2*n_players + 1)
-        self.observation_space = spaces.Box(low=0, high=2*n_players + 1, shape=(n_players,), dtype=np.float32)
+        self.action_space = spaces.Discrete(2 * n_players + 1)
+        self.observation_space = spaces.Box(low=0, high=2 * n_players + 1, shape=(n_players,), dtype=np.float32)
         self.nb_rounds = nb_rounds
         self.n_players = n_players
         self.alpha = alpha
@@ -50,7 +51,7 @@ class PublicGood(Env):
     def step(self, own_action):
         self.last_actions = actions = self.calc_actions(own_action)
         self.t += 1
-        r = (actions.sum() - own_action**2 / 2) / self.nb_rounds
+        r = (actions.sum() - own_action ** 2 / 2) / self.nb_rounds
         return tuple(actions), r, self.t == self.nb_rounds, False, {"liabilities": self.liabilities.copy(), "time": self.t}
 
     def reset(self, *, seed=None, options=None):
@@ -66,6 +67,8 @@ class PublicGood(Env):
         actions[0] = own_action
         shortfalls = np.maximum(0, self.liabilities - self.last_actions)
         avg_shortfall = shortfalls.sum() / self.n_players
-        l = self.liabilities = self.n_players + self.alpha * (shortfalls - avg_shortfall) 
-        actions[1:] = np.minimum(np.maximum(0, np.round(l[1:] + np.random.normal(0, self.sigma, self.n_players - 1))), 2*self.n_players)            
+        l = self.liabilities = self.n_players + self.alpha * (shortfalls - avg_shortfall)
+        actions[1:] = np.minimum(
+            np.maximum(0, np.round(l[1:] + np.random.normal(0, self.sigma, self.n_players - 1))), 2 * self.n_players
+        )
         return actions
