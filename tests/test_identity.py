@@ -4,7 +4,7 @@ from stable_baselines3.common.envs import IdentityEnv, IdentityEnvMultiBinary, I
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from sb3_contrib import QRDQN, TRPO, ARDQN
+from sb3_contrib import ARDQN, QRDQN, TRPO
 
 DIM = 4
 

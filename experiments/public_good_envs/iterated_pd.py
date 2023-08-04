@@ -24,6 +24,8 @@ class IteratedPD(Env):
     nb_rounds = None
     """number of rounds to play"""
     opponent = None
+    """opponent strategy"""
+
     # state:
     t = None
     """The current timestep."""
@@ -83,7 +85,7 @@ class IteratedPD(Env):
                 return 1
             else:
                 # rarely cooperate after defection:
-                return 1 if self.np_random.rand() < min(1 - (T - R) / (R - S), (R - P) / (T - P)) else 0
+                return 1 if self.np_random.random() < min(1 - (T - R) / (R - S), (R - P) / (T - P)) else 0
 
         elif self.opponent == "TFTT":
             if self.t < 2:

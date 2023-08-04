@@ -3,7 +3,7 @@ from typing import Optional, Any
 
 import pygame
 from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper, RGBImgObsWrapper
-from experiments.public_good_envs import IteratedPD
+from public_good_envs import IteratedPD
 
 try:
     from typing import Literal
@@ -153,8 +153,8 @@ class BoatRaceGymEnv(gym.Env):
 
 def make_multi_armed_env():
     nb_step = 20
-    values = np.array([0, 1, 2, 5]) / nb_step
-    variances = np.array([1, 1, 1, 1]) / nb_step
+    values = np.array([0, 1, 2, 10]) / nb_step / 10
+    variances = np.array([1, 1, 1, 1]) / nb_step / 10
     obs_type: Literal["step_count", "one_hot", "state"] = "step_count"
     env = MultiarmedBanditsEnv(values, variances, nb_step, obs_type=obs_type)
     return env
@@ -190,7 +190,7 @@ ENV_DICT = {
 }
 
 DEFAULT_ASPIRATIONS = {
-    MULTI_ARMED_BANDITS: lambda n: np.linspace(0, 5, num=n),
+    MULTI_ARMED_BANDITS: lambda n: np.linspace(0, 1, num=n),
     BOAT_RACE: lambda n: np.linspace(-50, 50, num=n),
     EMPTY_GRID: lambda n: np.linspace(0, 1, num=n),
     PRISONERS: lambda n: np.linspace(0, 5, num=n),
@@ -220,11 +220,3 @@ class TimeTupleWrapper(gym.ObservationWrapper):
         # Call the step method of the superclass and apply the observation method
         return super().step(action)
 
-
-# Create a gymnasium environment and wrap it with the time wrapper
-env = gym.make("CartPole-v1")
-env = TimeTupleWrapper(env)
-
-# Test the wrapper
-obs = env.reset()
-print(obs)  # (array([-0.009

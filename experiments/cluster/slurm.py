@@ -1,8 +1,6 @@
-import argparse
 import os
 from os import path
 import subprocess
-import time
 from collections.abc import Iterable
 
 dirname = os.path.dirname(os.path.realpath(__file__))
@@ -15,56 +13,6 @@ COMMAND_PLACEHOLDER = "${COMMAND_PLACEHOLDER}"
 GIVEN_NODE = "${GIVEN_NODE}"
 LOAD_ENV = "${LOAD_ENV}"
 WORK_DIR = "${WORK_DIR}"
-
-
-# def submit_job(exp_name, memory=4, node=None, processor="cpu", duration="short", load_env="", command="", exclusive=False):
-#
-#     I only use submit_job_array, but I keep this function for reference. It's not up to date.
-#
-#     if node:
-#         node_info = "#SBATCH -w {}".format(node)
-#     else:
-#         node_info = ""
-#
-#     job_name = "{}_{}".format(exp_name, time.strftime("%m%d-%H%M", time.localtime()))
-#
-#     memory_option = f"#SBATCH --mem={memory * 1_000}" if memory else ""
-#
-#     qos = "gpu" + duration if processor == "gpu" else duration
-#     partition = "gpu" if processor == "gpu" else "standard"
-#     partition_option = f"""
-# #SBATCH --partition={partition}
-# #SBATCH --qos={qos}
-# {"#SBATCH --gres=gpu:k40m:1" if processor == "gpu" else ""}
-#     """
-#
-#     exclusive = "#SBATCH --exclusive" if exclusive else ""
-#
-#     # ===== Modified the template script =====
-#     with open(template_file, "r") as f:
-#         text = f.read()
-#     text = (
-#         text.replace(JOB_NAME, job_name)
-#         .replace(PARTITION_OPTION, partition_option)
-#         .replace(MEMORY_OPTION, memory_option)
-#         .replace(EXCLUSIVE, exclusive)
-#         .replace(COMMAND_PLACEHOLDER, command)
-#         .replace(LOAD_ENV, str(load_env))
-#         .replace(GIVEN_NODE, node_info)
-#     )
-#
-#     # ===== Save the script =====
-#     script_file = os.path.join(dirname, "logs/{}.sh".format(job_name))
-#     with open(script_file, "w") as f:
-#         f.write(text)
-#
-#     # ===== Submit the job =====
-#     subprocess.Popen(["sbatch", script_file], env=os.environ)
-#     print(
-#         "Job submitted! Script file is at: {}. Log file is at: {}".format(script_file, "./slurm/logs/{}.out".format(job_name))
-#     )
-#
-
 ARRAY_SIZE = "${ARRAY_SIZE}"
 DEPENDENCY = "${DEPENDENCY}"
 array_template_file = path.join(dirname, "array_template.sh")
@@ -96,6 +44,23 @@ def submit_job_array(
     testing=False,
     wandb_sync=False,
 ):
+    """
+    Submit a job array to the cluster. 
+    A job array is a job that will run n_jobs times the same command. Each worker will be able to access its index in the array with `os.environ["SLURM_ARRAY_TASK_ID"]`.
+    The job array will be named `experiment_name` and the logs will be saved in {work_dir}/logs/slurm/{experiment_name.out}.
+    If post_python_file is not None, a job will be submitted after the array job is finished. This job will have a dependency on the array job.
+    This function will create a script file in ./logs/array_{experiment_name}.sh and submit it to the cluster if testing=False. Else, it will only create the script file.
+    :param python_file: The python file to run. It should be in the same directory as this file.
+    :param args: A dictionary of arguments to pass to the python file. The arguments will be passed as --arg_key arg_value.
+    :param n_jobs: The number of jobs in the array.
+    :param experiment_name: The name of the job array.
+    :param post_python_file: The python file to run after the array job is finished. It should be in the same directory as this file. If None, no post job will be submitted.
+    :param post_args: A dictionary of arguments to pass to the post python file. The arguments will be passed as --arg_key arg_value.
+    :param testing: If True, the script file will be created but not submitted to the cluster.
+    :param wandb_sync: If True, wandb will be synced before the post job is submitted. Check https://wandb.ai/ for more information.
+
+
+    """
     # Assert python file and post_python file exist
     python_file = path.join(dirname, python_file)
     if post_python_file is not None:
@@ -165,106 +130,3 @@ def submit_job_array(
                         f'"wandb sync {args["log_path"]}"',
                     ]
                 )
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--exp-name",
-        type=str,
-        required=True,
-        help="The job name and path to logging file (exp_name.log).",
-    )
-    parser.add_argument("--memory", "-m", type=int, help="The memory to use (in GB).", default=4)
-    parser.add_argument(
-        "--node",
-        "-w",
-        type=str,
-        help="The specified nodes to use. Same format as the " "return of 'sinfo'. Default: ''.",
-    )
-    parser.add_argument(
-        "--processor",
-        "-p",
-        type=str,
-        choices=["gpu", "cpu"],
-        default="cpu",
-        help="Whether to use a gpu or a cpu",
-    )
-    parser.add_argument(
-        "--duration",
-        "-d",
-        choices=["short", "medium", "long"],
-        type=str,
-        default="short",
-        help="slurm qos duration (short, medium, long)",
-    )
-    parser.add_argument(
-        "--load-env",
-        type=str,
-        help="The script to load your environment ('module load cuda/10.1')",
-        default="",
-    )
-    parser.add_argument(
-        "--command",
-        type=str,
-        required=True,
-        help="The command you wish to execute. For example: "
-        " --command 'python test.py'. "
-        "Note that the command must be a string.",
-    )
-    parser.add_argument(
-        "--testing",
-        action="store_true",
-        default=False,
-    )
-    parser.add_argument(
-        "--exclusive", action="store_true", default=False, help="Whether to reserve a whole node exclusively for this job."
-    )
-
-    args = parser.parse_args()
-
-    if args.node:
-        node_info = "#SBATCH -w {}".format(args.node)
-    else:
-        node_info = ""
-
-    job_name = "{}_{}".format(args.exp_name, time.strftime("%m%d-%H%M", time.localtime()))
-
-    memory_option = f"#SBATCH --mem={args.memory * 1_000}" if args.memory else ""
-
-    qos = "gpu" + args.duration if args.processor == "gpu" else args.duration
-    partition = "gpu" if args.processor == "gpu" else "standard"
-    partition_option = f"""
-#SBATCH --partition={partition}
-#SBATCH --qos={qos}
-{"#SBATCH --gres=gpu:k40m:1" if args.processor == "gpu" else ""}
-    """
-
-    exclusive = "#SBATCH --exclusive" if args.exclusive else ""
-
-    command = args.command
-
-    # ===== Modified the template script =====
-    with open(template_file, "r") as f:
-        text = f.read()
-    text = (
-        text.replace(JOB_NAME, job_name)
-        .replace(PARTITION_OPTION, partition_option)
-        .replace(MEMORY_OPTION, memory_option)
-        .replace(EXCLUSIVE, exclusive)
-        .replace(COMMAND_PLACEHOLDER, command)
-        .replace(LOAD_ENV, str(args.load_env))
-        .replace(GIVEN_NODE, node_info)
-    )
-
-    # ===== Save the script =====
-    script_file = os.path.join(dirname, "logs/{}.sh".format(job_name))
-    with open(script_file, "w") as f:
-        f.write(text)
-
-    # ===== Submit the job =====
-    print("Starting to submit job!")
-    subprocess.Popen(["sbatch", script_file], env=os.environ)
-    print(
-        "Job submitted! Script file is at: {}. Log file is at: {}".format(script_file, "./slurm/logs/{}.out".format(job_name))
-    )

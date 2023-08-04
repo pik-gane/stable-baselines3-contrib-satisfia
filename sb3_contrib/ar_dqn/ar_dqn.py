@@ -15,18 +15,18 @@ import numpy as np
 import torch as th
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
+from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
-from stable_baselines3.common.utils import get_parameters_by_name, polyak_update, should_collect_more_steps
+from stable_baselines3.common.utils import get_parameters_by_name, get_schedule_fn, polyak_update, should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 from torch import nn
 from torch.nn.modules.loss import MSELoss, SmoothL1Loss
 
 from sb3_contrib.ar_dqn.policies import ArDQNPolicy, CnnPolicy, MlpPolicy, MultiInputPolicy, QNetwork
-from sb3_contrib.common.satisficing.buffers import SatisficingReplayBuffer, SatisficingDictReplayBuffer
+from sb3_contrib.common.satisficing.buffers import SatisficingDictReplayBuffer, SatisficingReplayBuffer
 from sb3_contrib.common.satisficing.type_aliases import SatisficingReplayBufferSamples
-from sb3_contrib.common.satisficing.utils import interpolate, ratio
+from sb3_contrib.common.satisficing.utils import interpolate
 
 SelfArDQN = TypeVar("SelfArDQN", bound="ArDQN")
 
@@ -50,7 +50,13 @@ class ARDQN(ARQAlgorithm, DQN):
     :param mu: the aspiration smoothing coefficient (between 0 and 1) default 0 for no smoothing for lambda
     :param tau: the soft update coefficient ("Polyak update", between 0 and 1) default 1 for hard update
     :param gamma: the discount factor
+    :param rho: the aspiration propagation coefficient (between 0 and 1). 0 is for hard update (-= r /= gamma) and 1
+        is for aspiration rescaling. Default is 0.5. It can be a function
+        of the current progress remaining (from 1 to 0)
     :param loss: The loss function to use (MSELoss or SmoothL1Loss)
+    :param q_min_max_target: The way to compute the Q_min and Q_max targets. "Q" means that we use the target
+        Q_min/max values, "Delta" means that we use the target (Q - Q_min) and (Q_max - Q) values.
+    :param use_delta_nets: Whether to use delta_q_min/max or q_min/max networks
     :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
         like ``(5, "step")`` or ``(2, "episode")``.
     :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
@@ -69,8 +75,7 @@ class ARDQN(ARQAlgorithm, DQN):
     :param stats_window_size: Window size for the rollout logging, specifying the number of episodes to average
         the reported success rate, mean episode length, and mean reward over
     :param tensorboard_log: the log location for tensorboard (if None, no logging)
-    :param policy_kwargs: additional arguments to be passed to the policy on creation. MUST contains
-        initial_aspiration: The inital aspiration of the agent i.e the desired reward over a run
+    :param policy_kwargs: additional arguments to be passed to the policy on creation
     :param verbose: Verbosity level: 0 for no output, 1 for info messages (such as device or wrappers used), 2 for
         debug messages
     :param seed: Seed for the pseudo random generators
@@ -103,8 +108,10 @@ class ARDQN(ARQAlgorithm, DQN):
         mu: float = 0.5,
         tau: float = 1.0,
         gamma: float = 0.99,
-        rho: float = 0.5,
+        rho: Union[float, Schedule] = 0.5,
         loss: Literal["MSE", "SmoothL1Loss"] = "SmoothL1Loss",
+        q_min_max_target: Literal["Q", "Delta"] = "Q",
+        use_delta_nets: bool = True,
         train_freq: Union[int, Tuple[int, str]] = 4,
         gradient_steps: int = 1,
         replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
@@ -122,8 +129,19 @@ class ARDQN(ARQAlgorithm, DQN):
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
     ) -> None:
+        # if not isinstance(policy, str) that means that the policy is being loaded from a saved model
         if initial_aspiration is None and isinstance(policy, str):
             raise ValueError("You must specify an initial aspiration for AR DQN")
+        if policy_kwargs is None:
+            policy_kwargs = {}
+        if "use_delta_nets" in policy_kwargs:
+            warnings.warn(
+                f"use_delta_nets was passed to the policy kwargs, but it will be overwritten by the AR-DQN kwargs",
+                UserWarning,
+            )
+        policy_kwargs["use_delta_nets"] = use_delta_nets
+        self.rho_schedule = get_schedule_fn(rho)
+        self.use_delta_nets = use_delta_nets
         # Will call the `ARAlgorithm` constructor which will call the `DQN` constructor
         super().__init__(
             initial_aspiration,
@@ -137,7 +155,7 @@ class ARDQN(ARQAlgorithm, DQN):
             train_freq=train_freq,
             gradient_steps=gradient_steps,
             gamma=gamma,
-            rho=rho,
+            use_delta_predictors=use_delta_nets,
             replay_buffer_class=SatisficingReplayBuffer,
             replay_buffer_kwargs=replay_buffer_kwargs,
             optimize_memory_usage=optimize_memory_usage,
@@ -154,20 +172,32 @@ class ARDQN(ARQAlgorithm, DQN):
             device=device,
             _init_setup_model=_init_setup_model,
         )
+        assert q_min_max_target in [
+            "Delta",
+            "Q",
+        ], f"q_min_max_target must be either 'Delta' or 'Q', not {q_min_max_target}"
+        self.q_min_max_target = q_min_max_target
         self.mu = mu
-        self.loss = self.loss_aliases[loss]()
+        if loss in self.loss_aliases.keys():
+            self.loss = self.loss_aliases[loss]()
 
     def _setup_model(self) -> None:
         self.replay_buffer_class = (
             SatisficingDictReplayBuffer if isinstance(self.observation_space, spaces.Dict) else SatisficingReplayBuffer
         )
         super()._setup_model()
+        self.policy.rho = self.rho_schedule(1)
         # Copy running stats for delta networks, see GH issue #996
-        # Todo
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, "running_")
-        self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, "running_")
-        self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, "running_")
+        if self.use_delta_nets:
+            self.batch_norm_stats += get_parameters_by_name(self.delta_qmin_net, ["running_"])
+            self.batch_norm_stats += get_parameters_by_name(self.delta_qmax_net, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmin_net_target, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.delta_qmax_net_target, ["running_"])
+        else:
+            self.batch_norm_stats += get_parameters_by_name(self.qmin_net, ["running_"])
+            self.batch_norm_stats += get_parameters_by_name(self.qmax_net, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.qmin_net_target, ["running_"])
+            self.batch_norm_stats_target += get_parameters_by_name(self.qmax_net_target, ["running_"])
 
     def _create_aliases(self) -> None:
         super()._create_aliases()
@@ -175,6 +205,10 @@ class ARDQN(ARQAlgorithm, DQN):
         self.delta_qmin_net_target = self.policy.delta_qmin_net_target
         self.delta_qmax_net = self.policy.delta_qmax_net
         self.delta_qmax_net_target = self.policy.delta_qmax_net_target
+        self.qmin_net = self.policy.qmin_net
+        self.qmin_net_target = self.policy.qmin_net_target
+        self.qmax_net = self.policy.qmax_net
+        self.qmax_net_target = self.policy.qmax_net_target
 
     def train(self, gradient_steps: int, batch_size: int = 100) -> None:
         # Switch to train mode (this affects batch norm / dropout)
@@ -208,26 +242,46 @@ class ARDQN(ARQAlgorithm, DQN):
         obs: th.Tensor,
         actions: th.Tensor,
         q_target: th.Tensor,
-        delta_qmin_target: th.Tensor,
-        delta_qmax_target: th.Tensor,
+        qmin_target: th.Tensor,
+        qmax_target: th.Tensor,
     ):
-        current_q_values = self.q_net(obs)
-        current_delta_min, current_delta_max = self.delta_qmin_net(obs), self.delta_qmax_net(obs)
+        def take(qs):
+            return th.gather(qs, dim=1, index=actions).squeeze(1)
 
-        # Retrieve the q-values for the actions from the replay buffer
-        current_q_values = th.gather(current_q_values, dim=1, index=actions)
-        current_delta_min = th.gather(current_delta_min, dim=1, index=actions)
-        current_delta_max = th.gather(current_delta_max, dim=1, index=actions)
+        current_q_values = take(self.q_net(obs))
+        if self.use_delta_nets:
+            current_delta_min, current_delta_max = take(self.delta_qmin_net(obs)), take(self.delta_qmax_net(obs))
+            # Detach the q-values, as we don't want to update the Q network for the q_min/q_max loss
+            if self.q_min_max_target == "Q":
+                q = current_q_values.detach()
+                current_q_min = q - current_delta_min
+                current_q_max = q + current_delta_max
+                q_min_loss = self.loss(current_q_min, qmin_target)
+                q_max_loss = self.loss(current_q_max, qmax_target)
+            elif self.q_min_max_target == "Delta":
+                delta_min_target = q_target - qmin_target
+                delta_max_target = qmax_target - q_target
+                q_min_loss = self.loss(current_delta_min, delta_min_target)
+                q_max_loss = self.loss(current_delta_max, delta_max_target)
+        else:
+            current_q_min, current_q_max = take(self.qmin_net(obs)), take(self.qmax_net(obs))
+            if self.q_min_max_target == "Q":
+                q_min_loss = self.loss(current_q_min, qmin_target)
+                q_max_loss = self.loss(current_q_max, qmax_target)
+            elif self.q_min_max_target == "Delta":
+                q = current_q_values.detach()
+                delta_min_target = q_target - qmin_target
+                delta_max_target = qmax_target - q_target
+                current_delta_min = q - current_q_min
+                current_delta_max = current_q_max - q
+                q_min_loss = self.loss(current_delta_min, delta_min_target)
+                q_max_loss = self.loss(current_delta_max, delta_max_target)
 
-        # Compute Huber loss (less sensitive to outliers)
         q_loss = self.loss(current_q_values, q_target)
-        qmin_loss = self.loss(current_delta_min, delta_qmin_target)
-        qmax_loss = self.loss(current_delta_max, delta_qmax_target)
-
         # Optimize the policy
         self.policy.optimizer.zero_grad()
         # Backward all losses
-        (q_loss + qmin_loss + qmax_loss).backward()
+        (q_loss + q_min_loss + q_max_loss).backward()
         # Clip gradient norm
         th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
         self.policy.optimizer.step()
@@ -289,10 +343,10 @@ class ARDQN(ARQAlgorithm, DQN):
                 aspiration_diff = aspiration_diff = (
                     self.policy.aspiration
                     - np.take_along_axis(
-                        self.policy.q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
+                        self.policy.get_q_values(self._last_obs).cpu().numpy(), np.expand_dims(actions, 1), 1
                     ).squeeze(1)
                 ).mean()
-                self.rescale_aspiration(
+                self.propagate_aspiration(
                     self._last_obs,
                     actions,
                     rewards,
@@ -452,6 +506,8 @@ class ARDQN(ARQAlgorithm, DQN):
             polyak_update(self.batch_norm_stats, self.batch_norm_stats_target, 1.0)
         self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
         self.logger.record("rollout/exploration_rate", self.exploration_rate)
+        self.policy.rho = self.rho_schedule(self._current_progress_remaining)
+        self.logger.record("rollout/rho", self.policy.rho)
 
     def set_env(self, env: GymEnv, force_reset: bool = True) -> None:
         """
