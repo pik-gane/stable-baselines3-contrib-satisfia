@@ -45,10 +45,14 @@ def submit_job_array(
 ):
     """
     Submit a job array to the cluster.
-    A job array is a job that will run n_jobs times the same command. Each worker will be able to access its index in the array with `os.environ["SLURM_ARRAY_TASK_ID"]`.
-    The job array will be named `experiment_name` and the logs will be saved in {work_dir}/logs/slurm/{experiment_name.out}.
-    If post_python_file is not None, a job will be submitted after the array job is finished. This job will have a dependency on the array job.
-    This function will create a script file in ./logs/array_{experiment_name}.sh and submit it to the cluster if testing=False. Else, it will only create the script file.
+    A job array is a job that will run n_jobs times the same command. Each worker will be able to access its index in
+    the array with `os.environ["SLURM_ARRAY_TASK_ID"]`.
+    The job array will be named `experiment_name` and the logs will be saved in {work_dir}/logs/slurm/{experiment_name}.out.
+    If post_python_file is not None, a job will be submitted and executed only if all the jobs in the array are finished
+    and no job failed. Logs will be saved in {work_dir}/logs/slurm/post_{experiment_name}.out.
+
+    This function will create a script file in ./logs/array_{experiment_name}.sh and submit it to the cluster.
+    If testing is True, the script file will be created but not submitted to the cluster.
     :param python_file: The python file to run. It should be in the same directory as this file.
     :param args: A dictionary of arguments to pass to the python file. The arguments will be passed as --arg_key arg_value.
     :param n_jobs: The number of jobs in the array.
@@ -56,7 +60,7 @@ def submit_job_array(
     :param post_python_file: The python file to run after the array job is finished. It should be in the same directory as this file. If None, no post job will be submitted.
     :param post_args: A dictionary of arguments to pass to the post python file. The arguments will be passed as --arg_key arg_value.
     :param testing: If True, the script file will be created but not submitted to the cluster.
-    :param wandb_sync: If True, wandb will be synced before the post job is submitted. Check https://wandb.ai/ for more information.
+    :param wandb_sync: If True, wandb will be synced after the array job is finished.
 
 
     """
