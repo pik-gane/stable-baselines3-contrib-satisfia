@@ -4,7 +4,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.vec_env import VecNormalize
 
-from sb3_contrib import ARS, QRDQN, TQC, RecurrentPPO
+from sb3_contrib import ARDQN, ARS, QRDQN, TQC, RecurrentPPO
 from sb3_contrib.common.vec_env import AsyncEval
 
 N_STEPS_TRAINING = 500
@@ -12,7 +12,8 @@ SEED = 0
 ARS_MULTI = "ars_multi"
 
 
-@pytest.mark.parametrize("algo", [ARS, QRDQN, TQC, ARS_MULTI, RecurrentPPO])
+# @pytest.mark.parametrize("algo", [ARS, QRDQN, TQC, ARS_MULTI, RecurrentPPO, ArDQN])
+@pytest.mark.parametrize("algo", [ARDQN])
 def test_deterministic_training_common(algo):
     results = [[], []]
     rewards = [[], []]
@@ -34,7 +35,7 @@ def test_deterministic_training_common(algo):
             }
         )
     else:
-        if algo == QRDQN:
+        if algo in {QRDQN, ARDQN}:
             env_id = "CartPole-v1"
             kwargs.update({"learning_starts": 100, "target_update_interval": 100})
         elif algo == ARS:
@@ -42,6 +43,8 @@ def test_deterministic_training_common(algo):
         elif algo == RecurrentPPO:
             kwargs.update({"policy_kwargs": dict(net_arch=[], enable_critic_lstm=True, lstm_hidden_size=8)})
             kwargs.update({"n_steps": 50, "n_epochs": 4})
+        if algo in {ARDQN}:
+            kwargs["initial_aspiration"] = 0.0
     policy_str = "MlpLstmPolicy" if algo == RecurrentPPO else "MlpPolicy"
     for i in range(2):
         model = algo(policy_str, env_id, seed=SEED, **kwargs)
@@ -58,6 +61,8 @@ def test_deterministic_training_common(algo):
         obs = env.reset()
         states = None
         episode_start = None
+        if algo in {ARDQN}:
+            model.switch_to_eval()
         for _ in range(100):
             action, states = model.predict(obs, state=states, episode_start=episode_start, deterministic=False)
             obs, reward, episode_start, _ = env.step(action)

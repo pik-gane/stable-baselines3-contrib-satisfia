@@ -1,0 +1,16 @@
+# python >= 3.10.0
+gymnasium
+numpy
+torch
+setuptools
+pytest
+pygame
+psutil
+stable-baselines3[extra]
+minigrid
+matplotlib
+tqdm
+ray
+plotly
+pycolab
+numpy==1.24.3 # for pycolab higher versions are not supported

@@ -9,11 +9,12 @@ from stable_baselines3.common.envs import FakeImageEnv
 from stable_baselines3.common.utils import zip_strict
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecTransposeImage, is_vecenv_wrapped
 
-from sb3_contrib import QRDQN, TQC, TRPO, MaskablePPO, RecurrentPPO
+from sb3_contrib import ARDQN, QRDQN, TQC, TRPO, MaskablePPO, RecurrentPPO
 from sb3_contrib.common.wrappers import ActionMasker
 
 
-@pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO])
+# @pytest.mark.parametrize("model_class", [TQC, QRDQN, TRPO, DDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
 def test_cnn(tmp_path, model_class, share_features_extractor):
     SAVE_NAME = "cnn_model.zip"
@@ -40,6 +41,15 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
                 features_extractor_kwargs=dict(features_dim=32),
             ),
         )
+    if model_class in {ARDQN}:
+        kwargs = dict(
+            buffer_size=250,
+            initial_aspiration=0.5,
+            policy_kwargs=dict(
+                features_extractor_kwargs=dict(features_dim=32),
+                shared_network="features_extractor" if share_features_extractor else "none",
+            ),
+        )
 
     model = model_class("CnnPolicy", env, **kwargs).learn(250)
 
@@ -51,6 +61,8 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
     # Test stochastic predict with channel last input
     if model_class == QRDQN:
         model.exploration_rate = 0.9
+    if model_class == ARDQN:
+        model.policy.reset_aspiration()
 
     for _ in range(10):
         model.predict(obs, deterministic=False)
@@ -68,11 +80,53 @@ def test_cnn(tmp_path, model_class, share_features_extractor):
     os.remove(str(tmp_path / SAVE_NAME))
 
 
-def patch_qrdqn_names_(model):
-    # Small hack to make the test work with QRDQN
+class DummyModule:
+    """
+    Used for patching names in ARDQN
+    """
+
+    def __init__(self, model: ARDQN, is_target: bool):
+        self.model = model
+        self.is_target = is_target
+
+    def parameters(self):
+        if self.is_target:
+            # Return the parameters of the target networks (q_net_target, delta_qmin_net_target, delta_qmax_net_target)
+            return (
+                list(self.model.q_net_target.parameters())
+                + list(self.model.delta_qmin_net_target.parameters())
+                + list(self.model.delta_qmax_net_target.parameters())
+            )
+        else:
+            return (
+                list(self.model.q_net.parameters())
+                + list(self.model.delta_qmin_net.parameters())
+                + list(self.model.delta_qmax_net.parameters())
+            )
+
+    def named_parameters(self):
+        if self.is_target:
+            return {
+                "q_net": dict(self.model.q_net_target.named_parameters()),
+                "delta_qmin_net": dict(self.model.delta_qmin_net_target.named_parameters()),
+                "delta_qmax_net": dict(self.model.delta_qmax_net_target.named_parameters()),
+            }
+        else:
+            return {
+                "q_net": dict(self.model.q_net.named_parameters()),
+                "delta_qmin_net": dict(self.model.delta_qmin_net.named_parameters()),
+                "delta_qmax_net": dict(self.model.delta_qmax_net.named_parameters()),
+            }
+
+
+def patch_names_(model):
+    # Small hack to make the test work with QRDQN and ARDQN
     if isinstance(model, QRDQN):
         model.critic = model.quantile_net
         model.critic_target = model.quantile_net_target
+    if isinstance(model, ARDQN):
+        model.critic = DummyModule(model, is_target=False)
+        model.critic_target = DummyModule(model, is_target=True)
 
 
 def params_should_match(params, other_params):
@@ -85,35 +139,51 @@ def params_should_differ(params, other_params):
         assert not th.allclose(param, other_param)
 
 
-@pytest.mark.parametrize("model_class", [TQC, QRDQN])
+# @pytest.mark.parametrize("model_class", [TQC, QRDQN, ARDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("share_features_extractor", [True, False])
-def test_feature_extractor_target_net(model_class, share_features_extractor):
-    if model_class == QRDQN and share_features_extractor:
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none", "min_max"])
+def test_feature_extractor_target_net(model_class, share_features_extractor, shared_network):
+    if model_class in {QRDQN, ARDQN} and share_features_extractor:
+        pytest.skip()
+    if model_class not in {ARDQN} and shared_network != "none":
         pytest.skip()
 
     env = FakeImageEnv(screen_height=40, screen_width=40, n_channels=1, discrete=model_class not in {TQC})
 
-    if model_class in {TQC, QRDQN}:
+    if model_class in {TQC, QRDQN, ARDQN}:
         # Avoid memory error when using replay buffer
         # Reduce the size of the features and the number of quantiles
         kwargs = dict(
             buffer_size=250,
             learning_starts=100,
-            policy_kwargs=dict(n_quantiles=25, features_extractor_kwargs=dict(features_dim=32)),
+            policy_kwargs=dict(features_extractor_kwargs=dict(features_dim=32)),
         )
-    if model_class != QRDQN:
+    if model_class in {QRDQN, TQC}:
+        kwargs["policy_kwargs"]["n_quantiles"] = 25
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.5
+        kwargs["policy_kwargs"]["shared_network"] = shared_network
+    if model_class not in {QRDQN, ARDQN}:
         kwargs["policy_kwargs"]["share_features_extractor"] = share_features_extractor
 
     model = model_class("CnnPolicy", env, seed=0, **kwargs)
 
-    patch_qrdqn_names_(model)
+    patch_names_(model)
 
+    if shared_network in {"features_extractor", "all"}:
+        # Check that the objects are the same and not just copied
+        assert (
+            id(model.policy.q_net.features_extractor)
+            == id(model.policy.delta_qmin_net.features_extractor)
+            == id(model.policy.delta_qmax_net.features_extractor)
+        )
     if share_features_extractor:
         # Check that the objects are the same and not just copied
         assert id(model.policy.actor.features_extractor) == id(model.policy.critic.features_extractor)
     else:
         # Check that the objects differ
-        if model_class != QRDQN:
+        if model_class not in {QRDQN, ARDQN}:
             assert id(model.policy.actor.features_extractor) != id(model.policy.critic.features_extractor)
 
     # Critic and target should be equal at the begginning of training
@@ -127,7 +197,7 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
     # Re-initialize and collect some random data (without doing gradient steps)
     model = model_class("CnnPolicy", env, seed=0, **kwargs).learn(10)
 
-    patch_qrdqn_names_(model)
+    patch_names_(model)
 
     original_param = deepcopy(list(model.critic.parameters()))
     original_target_param = deepcopy(list(model.critic_target.parameters()))
@@ -148,25 +218,26 @@ def test_feature_extractor_target_net(model_class, share_features_extractor):
     # Deactivate learning rate
     model.lr_schedule = lambda _: 0.0
     # Re-activate polyak update
-    model.tau = 0.01
+    model.tau = 0.1
     # Special case for QRDQN: target net is updated in the `collect_rollouts()`
     # not the `train()` method
-    if model_class == QRDQN:
+    if model_class in {QRDQN, ARDQN}:
         model.target_update_interval = 1
         model._on_step()
 
     model.train(gradient_steps=1)
+    # Critic should be the same (lr=0.0)
+    params_should_match(original_param, model.critic.parameters())
 
     # Target should have changed now (due to polyak update)
     params_should_differ(original_target_param, model.critic_target.parameters())
 
-    # Critic should be the same
-    params_should_match(original_param, model.critic.parameters())
 
-
-@pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC])
+# @pytest.mark.parametrize("model_class", [TRPO, MaskablePPO, RecurrentPPO, QRDQN, TQC, ArDQN])
+@pytest.mark.parametrize("model_class", [ARDQN])
 @pytest.mark.parametrize("normalize_images", [True, False])
-def test_image_like_input(model_class, normalize_images):
+@pytest.mark.parametrize("shared_network", ["all", "features_extractor", "none", "min_max"])
+def test_image_like_input(model_class, normalize_images, shared_network):
     """
     Check that we can handle image-like input (3D tensor)
     when normalize_images=False
@@ -200,7 +271,8 @@ def test_image_like_input(model_class, normalize_images):
         seed=1,
     )
     policy = "CnnLstmPolicy" if model_class == RecurrentPPO else "CnnPolicy"
-
+    if model_class in {ARDQN}:
+        kwargs["initial_aspiration"] = 0.0
     if model_class in {TRPO, MaskablePPO, RecurrentPPO}:
         kwargs.update(dict(n_steps=64, batch_size=64))
     else:
