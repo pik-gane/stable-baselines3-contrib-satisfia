@@ -1,10 +1,9 @@
 import os
-from os import path
 import subprocess
 from collections.abc import Iterable
+from os import path
 
 dirname = os.path.dirname(os.path.realpath(__file__))
-template_file = f"{dirname}/slurm-template.sh"
 JOB_NAME = "${JOB_NAME}"
 PARTITION_OPTION = "${PARTITION_OPTION}"
 MEMORY_OPTION = "${MEMORY_OPTION}"
@@ -99,7 +98,7 @@ def submit_job_array(
             text = f.read()
         text = (
             text.replace(COMMAND_PLACEHOLDER, f"python3 {post_python_file} {dict_to_str_args(post_args)}")
-            .replace(ARRAY_SIZE, "0") # We only want one job
+            .replace(ARRAY_SIZE, "0")  # We only want one job
             .replace(DEPENDENCY, f"#SBATCH --dependency=afterok:{job_id}")
             .replace(JOB_NAME, f"post_{experiment_name}")
             .replace(WORK_DIR, work_dir)

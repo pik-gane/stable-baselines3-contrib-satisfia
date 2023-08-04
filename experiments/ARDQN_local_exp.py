@@ -100,9 +100,9 @@ def train_model(rho, mu, aspiration, share, name):
 print("Starting experiment " + EXPERIMENT_NAME)
 names = [f"{i}_mu_{mu}_rho_{rho}_asp_{asp}_share_{share}" for i, (rho, mu, asp, share) in enumerate(params)]
 names_iter = iter(names)
-ray_models = [train_model.remote(rho, mu, aspiration, share, next(names_iter)) for rho, mu, aspiration, share in params] + ([
-    train_model.remote(None, None, None, None)
-] if TRAIN_DQN else [])
+ray_models = [train_model.remote(rho, mu, aspiration, share, next(names_iter)) for rho, mu, aspiration, share in params] + (
+    [train_model.remote(None, None, None, None)] if TRAIN_DQN else []
+)
 try:
     ray.get(ray_models)
 finally:

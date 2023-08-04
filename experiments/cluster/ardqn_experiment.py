@@ -1,11 +1,10 @@
+from itertools import product
 from os import path
 
 import numpy as np
 
-from experiments.custom_envs import DEFAULT_ASPIRATIONS, EMPTY_GRID, BOAT_RACE, MULTI_ARMED_BANDITS, PRISONERS
+from experiments.custom_envs import DEFAULT_ASPIRATIONS, EMPTY_GRID
 from slurm import submit_job_array
-from itertools import product
-import time
 
 NB_ASPIRATION = 9
 NB_RHO = 5

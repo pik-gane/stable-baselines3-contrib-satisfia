@@ -23,4 +23,4 @@ def make_model(aspiration, mu, rho):
 models = [make_model(*args) for args in tqdm(product(aspirations, mus, rhos))]
 
 plot = plot_ar(env, models, n_eval_episodes=5)
-plot.show(renderer='browser')
+plot.show(renderer="browser")

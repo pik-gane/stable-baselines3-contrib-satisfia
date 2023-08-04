@@ -7,7 +7,6 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from sb3_contrib import LRADQN
-from sb3_contrib.common.satisficing.evaluation import plot_ar
 
 
 def load_model(log_path, name):
@@ -28,7 +27,6 @@ if __name__ == "__main__":
     parser.add_argument("--log_path", type=str, required=True)
     parser.add_argument("--expected_time_steps", type=int, required=True)
 
-
     args = parser.parse_args()
     models = []
     results = []
@@ -39,12 +37,13 @@ if __name__ == "__main__":
                 results.append(load_results(args.log_path, name))
                 models.append(model)
             else:
-                warnings.warn(f"Model {name} has {model.num_timesteps} timesteps, expected {args.expected_time_steps}\n"
-                              "and will therefore not be plotted.")
+                warnings.warn(
+                    f"Model {name} has {model.num_timesteps} timesteps, expected {args.expected_time_steps}\n"
+                    "and will therefore not be plotted."
+                )
         else:
             warnings.warn(f"Model {name} not found in {args.log_path}")
-    
-    
+
     df = pd.DataFrame(
         {
             "lra": [m.local_relative_aspiration for m in models],

@@ -219,4 +219,3 @@ class TimeTupleWrapper(gym.ObservationWrapper):
         self.time_step += 1
         # Call the step method of the superclass and apply the observation method
         return super().step(action)
-

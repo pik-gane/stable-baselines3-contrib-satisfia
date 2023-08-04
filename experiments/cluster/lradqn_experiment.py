@@ -1,15 +1,14 @@
+from itertools import product
 from os import path
 
 import numpy as np
 
-from experiments.custom_envs import DEFAULT_ASPIRATIONS, EMPTY_GRID, BOAT_RACE, MULTI_ARMED_BANDITS, PRISONERS
+from experiments.custom_envs import EMPTY_GRID
 from slurm import submit_job_array
-from itertools import product
-import time
 
 NB_LRA = 20
 MODEL_PER_LRA = 10
-EXPERIMENT_NAME = "test_lra_experiment"
+EXPERIMENT_NAME = "lra_experiment" + input("Complete the experiment name (or press enter to use default): lra_experiment")
 ENV_ID = EMPTY_GRID
 LOG_PATH = path.join("logs", EXPERIMENT_NAME, ENV_ID)
 LOCAL_RELATIVE_ASPIRATIONS = list(np.linspace(0, 1, NB_LRA))
@@ -18,7 +17,6 @@ N_EVAL_EPISODES = 100
 LEARNING_STEPS = 1_000_000
 
 if __name__ == "__main__":
-    # Compute the cartesian product of rhos mus and aspirations
     p = list(product(LOCAL_RELATIVE_ASPIRATIONS, range(MODEL_PER_LRA)))
     lra_names = [f"LRA_{lra:.3f}_{i}" for lra, i in p]
     nb_exp = NB_LRA * MODEL_PER_LRA + TRAIN_DQN

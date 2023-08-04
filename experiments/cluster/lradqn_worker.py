@@ -1,18 +1,17 @@
 # Will be called by slurm
+import argparse
+import pickle
 import traceback
 from os import path, environ
 
-from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.logger import configure
-import argparse
-import pickle
-from experiments.custom_envs import ENV_DICT
-
-from sb3_contrib import ARDQN, LRADQN
-from sb3_contrib.common.satisficing.evaluation import evaluate_policy as ar_evaluate_policy
-from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.logger import configure
+
+from experiments.custom_envs import ENV_DICT
 from experiments.utils import DQNCallback
+from sb3_contrib import LRADQN
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

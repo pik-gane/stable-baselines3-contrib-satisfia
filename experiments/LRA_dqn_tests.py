@@ -70,5 +70,4 @@ model = LRADQN(
 )
 model.set_logger(tb_logger("LRA_DQN"))
 model.learn(LEARNING_STEPS, callback=DQNCallback())
-print(f'result: {evaluate_policy(model, make_env(), deterministic=False)}')
-
+print(f"result: {evaluate_policy(model, make_env(), deterministic=False)}")
