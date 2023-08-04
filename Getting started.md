@@ -159,7 +159,7 @@ Hyperparameters shared with DQN:
 - [ ] Add a training procedure for LRAR-DQN. For now it's using pretrained LRA-DQN Q network, but it would be great to
   improve those Q networks on the actual LRAR-DQN trajectories. I think you'd have to make inherit from the DQN class.
 
-## Tasks that I didn't have time to do but I though might be useful (feel free to do them if you want)
+## Tasks that I didn't have time to do but I though might be useful (feel free to do them or not)
 
 - [ ] Test the iterated prisoner dilemna envs
 - [ ] Implement and test the Jobst snooker env
@@ -188,6 +188,13 @@ Hyperparameters shared with DQN:
     - make sure that the AR-DQN tests pass
     - revert my changes that disabled the tests of the other algorithms
     - maybe separate the AR-DQN algorithm and the (AR) Q-learning algorithms in two different PR
+- Regarding ARDQN and LRADQN model loading: Currently, the default initial_aspiration / local_relative_aspiration is set
+  to None. In practice, however, it is checked whether it is None only when loading a pre-trained model, as it should be
+  mandatory when creating such a model. I implemented it this way to avoid having to rewrite the load function. This
+  approach ensures that if SB3 modifies their load code, we won't have to change ours. However, this might not be the
+  best approach, and it's possible to rewrite the load function for ARDQN and LRADQN. By changing just one line of code
+  in the load function, we could pass the saved initial_aspiration / local_relative_aspiration directly to the
+  constructor, enabling us to require these parameters in the constructor.
 
 ## Questions ?
 
