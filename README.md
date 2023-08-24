@@ -1,4 +1,5 @@
 <img src="docs/\_static/img/logo.png" align="right" width="40%"/>
+
 # Satisficing RL
 
 Fork of SB3-Contrib with implementation of satisficing algorithms. New algorithms on the repo:
