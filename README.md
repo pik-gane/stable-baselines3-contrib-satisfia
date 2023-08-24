@@ -1,8 +1,15 @@
 <img src="docs/\_static/img/logo.png" align="right" width="40%"/>
+# Satisficing RL
 
+Fork of SB3-Contrib with implementation of satisficing algorithms. New algorithms on the repo:
+- Q-learning (For comparaison purpose)
+- ARQ-learing
+- AR-DQN
+- LRA-DQN
+- LRAR-DQN
+
+## Stable-Baselines3 - Contrib (SB3-Contrib)
 [![CI](https://github.com/Stable-Baselines-Team/stable-baselines3-contrib/workflows/CI/badge.svg)](https://github.com/Stable-Baselines-Team/stable-baselines3-contrib/actions) [![codestyle](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-
-# Stable-Baselines3 - Contrib (SB3-Contrib)
 
 Contrib package for [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3) - Experimental reinforcement learning (RL) code.
 "sb3-contrib" for short.
