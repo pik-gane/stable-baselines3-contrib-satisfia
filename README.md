@@ -4,7 +4,7 @@
 
 Fork of SB3-Contrib with implementation of satisficing algorithms. New algorithms on the repo:
 - Q-learning (For comparaison purpose)
-- ARQ-learing
+- ARQ-learning
 - AR-DQN
 - LRA-DQN
 - LRAR-DQN
